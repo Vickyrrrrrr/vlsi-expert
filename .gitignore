@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+# Models (downloaded base models are huge — don't commit)
+models/*/
+models/*.pt
+models/*.bin
+models/*.safetensors
+!models/.gitkeep
+
+# Training data (generated, not committed)
+data/*.jsonl
+data/*.json
+data/*.parquet
+!data/.gitkeep
+
+# Training artifacts
+checkpoints/
+runs/
+*.ckpt
+
+# HuggingFace
+.cache/huggingface/
+.hf_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.secret
