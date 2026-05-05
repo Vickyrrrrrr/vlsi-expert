@@ -48,27 +48,60 @@ def clean_verilog(code: str) -> str:
 
 
 def load_verilogeval_v2() -> List[Dict]:
-    """Load VerilogEval v2 benchmark dataset from HuggingFace."""
+    """Load Verilog datasets from HuggingFace."""
     pairs = []
-    try:
-        from datasets import load_dataset
-        ds = load_dataset("NVIDIA/VerilogEval", split="test")
-        for item in ds:
-            spec = item.get("detail_description", "") or item.get("problem", "")
-            verilog = item.get("canonical_solution", "") or item.get("code", "")
-            if spec and verilog:
-                verilog = clean_verilog(verilog)
+    dataset_names = ["shailja/Verilog_GitHub"]
+
+    for ds_name in dataset_names:
+        try:
+            from datasets import load_dataset
+            ds = load_dataset(ds_name, split="train")
+
+            for item in ds:
+                # This dataset has a single 'text' field with full Verilog
+                text = str(item.get("text", "")) if "text" in item else ""
+
+                if not text or "module " not in text:
+                    continue
+
+                # Extract spec from comment header (text before 'module')
+                spec = ""
+                module_pos = text.find("module ")
+                if module_pos > 0:
+                    header = text[:module_pos]
+                    # Get first meaningful comment line as spec
+                    lines = [l.strip("/*// \t\n") for l in header.split("\n")]
+                    lines = [l for l in lines if l and not l.startswith("`") and not l.startswith("//")]
+                    spec = " ".join(lines[:3])[:500] if lines else "Verilog module"
+
+                if not spec or len(spec) < 10:
+                    continue
+
+                verilog = clean_verilog(text)
+                if not verilog:
+                    continue
+
                 ok, err = verify_iverilog(verilog)
                 pairs.append({
-                    "spec": spec.strip()[:2000],
+                    "spec": spec[:2000],
                     "verilog": verilog[:8000],
-                    "source": "verilogeval_v2",
+                    "source": "Verilog_GitHub",
                     "syntax_ok": ok,
-                    "syntax_error": err if not ok else ""
+                    "syntax_error": err if not ok else "",
                 })
-        print(f"  VerilogEval v2: {len(pairs)} pairs loaded")
-    except Exception as e:
-        print(f"  VerilogEval v2 failed: {e} — continuing anyway")
+
+                # Limit to 2000 pairs to avoid OOM during training
+                if len(pairs) >= 2000:
+                    break
+
+            print(f"  {ds_name}: {len(pairs)} pairs loaded")
+            if pairs:
+                break
+
+        except Exception as e:
+            print(f"  {ds_name}: {str(e)[:80]}")
+            continue
+
     return pairs
 
 
@@ -116,6 +149,24 @@ def generate_error_fix_pairs(base_pairs: List[Dict]) -> List[Dict]:
     return pairs
 
 
+def generate_fallback_data() -> List[Dict]:
+    """Generate basic Verilog training pairs if no online datasets are available."""
+    specs = [
+        ("8-bit up counter with synchronous reset and enable",
+         "module counter(input clk, input rst_n, input enable, output reg [7:0] count);\nalways @(posedge clk or negedge rst_n) begin\n  if (!rst_n) count <= 0;\n  else if (enable) count <= count + 1;\nend\nendmodule"),
+        ("4-bit shift register with parallel load",
+         "module shift_reg(input clk, input rst_n, input load, input [3:0] data_in, output reg [3:0] q);\nalways @(posedge clk or negedge rst_n) begin\n  if (!rst_n) q <= 0;\n  else if (load) q <= data_in;\n  else q <= {q[2:0], 1'b0};\nend\nendmodule"),
+        ("FSM that detects pattern 1011",
+         "module fsm_1011(input clk, input rst_n, input in, output reg detected);\nreg [1:0] state;\nalways @(posedge clk or negedge rst_n) begin\n  if (!rst_n) begin state <= 0; detected <= 0; end\n  else begin\n    case(state)\n      2'd0: state <= in ? 2'd1 : 2'd0;\n      2'd1: state <= in ? 2'd1 : 2'd2;\n      2'd2: state <= in ? 2'd3 : 2'd0;\n      2'd3: state <= in ? 2'd1 : 2'd2;\n    endcase\n    detected <= (state == 2'd3) && in;\n  end\nend\nendmodule"),
+    ]
+    pairs = []
+    for spec, verilog in specs:
+        ok, _ = verify_iverilog(verilog)
+        pairs.append({"spec": spec, "verilog": verilog, "source": "manual", "syntax_ok": ok, "syntax_error": ""})
+    print(f"  Manual fallback: {len(pairs)} pairs generated")
+    return pairs
+
+
 def main():
     print("=" * 60)
     print("  VLSI Expert — Public Data Collection")
@@ -125,11 +176,16 @@ def main():
     all_pairs = []
 
     # Phase 1: Clean verified pairs from public benchmarks
-    print("[1/3] Loading VerilogEval v2...")
+    print("[1/3] Loading Verilog datasets from HuggingFace...")
     all_pairs.extend(load_verilogeval_v2())
 
     print("[2/3] Loading RTLLM...")
     all_pairs.extend(load_rtllm())
+
+    # Fallback: generate basic training data if nothing loaded
+    if not all_pairs:
+        print("[FALLBACK] No online datasets loaded. Generating manual training data...")
+        all_pairs = generate_fallback_data()
 
     # Deduplicate by verilog content
     seen = set()
@@ -141,8 +197,9 @@ def main():
             unique_pairs.append(p)
 
     syntax_ok = sum(1 for p in unique_pairs if p["syntax_ok"])
+    total = len(unique_pairs) if unique_pairs else 1
     print(f"\n  Total unique pairs: {len(unique_pairs)}")
-    print(f"  Syntax OK: {syntax_ok} ({100*syntax_ok/len(unique_pairs):.1f}%)")
+    print(f"  Syntax OK: {syntax_ok} ({100*syntax_ok/total:.1f}%)")
 
     # Save train pairs
     train_path = DATA_DIR / "train_pairs.jsonl"
