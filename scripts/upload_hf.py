@@ -24,6 +24,14 @@ except Exception as e:
     print(f"     Get token at: https://huggingface.co/settings/tokens")
     sys.exit(1)
 
+# Create the repo first if it doesn't exist
+print(f"\n  Creating repo {HF_REPO}...")
+try:
+    api.create_repo(repo_id=HF_REPO, repo_type="model", exist_ok=True, private=False)
+    print(f"  ✅ Repo ready: https://huggingface.co/{HF_REPO}")
+except Exception as e:
+    print(f"  Repo creation note: {e}")
+
 # Upload the model
 print(f"\n  Uploading model files (this may take 10-15 min for 65GB)...")
 from huggingface_hub import upload_folder
