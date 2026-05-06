@@ -1,8 +1,8 @@
 ---
 title: VLSI Expert — AI Chip Designer
 emoji: 🔬
-colorFrom: orange
-colorTo: red
+colorFrom: red
+colorTo: purple
 sdk: gradio
 sdk_version: "6.0.0"
 python_version: "3.10"
