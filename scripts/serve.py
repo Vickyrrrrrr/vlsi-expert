@@ -35,7 +35,8 @@ def start():
         "--gpu-memory-utilization", "0.85",
         "--tensor-parallel-size", "1",
         "--port", str(PORT),
-        "--host", "0.0.0.0",
+        "--host", "127.0.0.1",      # Only VPS itself can access
+        "--api-key", "agentic-vlsi-expert-secure",  # Require this key in requests
     ]
     subprocess.run(cmd)
 
@@ -50,7 +51,12 @@ def test():
         "temperature": 0.2,
     }
     try:
-        r = requests.post(f"http://localhost:{PORT}/v1/completions", json=payload, timeout=30)
+        r = requests.post(
+            f"http://localhost:{PORT}/v1/completions",
+            json=payload,
+            headers={"Authorization": "Bearer agentic-vlsi-expert-secure"},
+            timeout=30,
+        )
         if r.status_code == 200:
             text = r.json()["choices"][0]["text"]
             print(f"✅ Response: module{text[:200]}...")

@@ -25,7 +25,7 @@ def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip
     llm = LLM(
         model="vlsi-expert-merged",
         base_url="http://localhost:8000/v1",
-        api_key="not-needed",  # vLLM doesn't require auth locally
+        api_key="agentic-vlsi-expert-secure",  # Required by vLLM --api-key
         max_tokens=4096,
         temperature=0.2,
     )
