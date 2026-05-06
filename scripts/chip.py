@@ -12,10 +12,12 @@ Then use:
 """
 
 import argparse
-import json
+import os
 import requests
 
-VLLM_URL = "http://localhost:8000/v1/completions"
+# Point to your VPS. Change this to your VPS IP or set VLSI_EXPERT_HOST env var.
+VPS_HOST = os.environ.get("VLSI_EXPERT_HOST", "129.212.179.250")
+VLLM_URL = f"http://{VPS_HOST}:8000/v1/completions"
 API_KEY = "agentic-vlsi-expert-secure"
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 
 MODEL_PATH = str(Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged")
 PORT = 8000
+API_KEY = "agentic-vlsi-expert-secure"  # Change this to your own key
 
 
 def start():
@@ -24,7 +25,8 @@ def start():
     print("  VLSI Expert — vLLM Server (MI300X + ROCm 7.2)")
     print(f"  Model: {MODEL_PATH}")
     print(f"  Port:  {PORT}")
-    print(f"  Endpoint: http://localhost:{PORT}/v1/completions")
+    print(f"  Endpoint: http://0.0.0.0:{PORT}/v1/completions")
+    print(f"  API Key:  {API_KEY}")
     print("=" * 60)
 
     cmd = [
@@ -35,8 +37,8 @@ def start():
         "--gpu-memory-utilization", "0.85",
         "--tensor-parallel-size", "1",
         "--port", str(PORT),
-        "--host", "127.0.0.1",      # Only VPS itself can access
-        "--api-key", "agentic-vlsi-expert-secure",  # Require this key in requests
+        "--host", "0.0.0.0",          # Public access (protected by API key + firewall)
+        "--api-key", API_KEY,         # Required in every request header
     ]
     subprocess.run(cmd)
 
@@ -54,7 +56,7 @@ def test():
         r = requests.post(
             f"http://localhost:{PORT}/v1/completions",
             json=payload,
-            headers={"Authorization": "Bearer agentic-vlsi-expert-secure"},
+            headers={"Authorization": f"Bearer {API_KEY}"},
             timeout=30,
         )
         if r.status_code == 200:
