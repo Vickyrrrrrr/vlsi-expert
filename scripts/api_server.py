@@ -21,7 +21,10 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 # ── Config ────────────────────────────────────────────────────────────
-MODEL_PATH = str(Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged")
+# Try local model first, fall back to HuggingFace Hub
+LOCAL_MODEL = str(Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged")
+HF_MODEL = "vxkyyy/vlsi-moe-ffn-merged"
+MODEL_PATH = LOCAL_MODEL if Path(LOCAL_MODEL).exists() else HF_MODEL
 API_KEY = "agentic-vlsi-expert-secure"
 PORT = 7860
 
@@ -51,14 +54,19 @@ async def lifespan(app: FastAPI):
     global model, tokenizer
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    print(f"Loading VLSI Expert from {MODEL_PATH}...")
+    print(f"Loading VLSI Expert from {'local disk' if LOCAL_MODEL == MODEL_PATH else 'HF Hub'}: {MODEL_PATH}...")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
         device_map="auto",
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
+        local_files_only=(MODEL_PATH == LOCAL_MODEL),
     )
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL_PATH,
+        trust_remote_code=True,
+        local_files_only=(MODEL_PATH == LOCAL_MODEL),
+    )
     tokenizer.pad_token = tokenizer.eos_token
     print(f"✅ Model loaded! Ready on port {PORT}")
     yield
