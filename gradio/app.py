@@ -56,7 +56,7 @@ def design_chip(spec: str, pdk: str, freq: int, width: int = 8) -> tuple:
     return verilog, sdc, report
 
 
-with gr.Blocks(title="VLSI Expert — AI Chip Designer", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="VLSI Expert — AI Chip Designer") as demo:
     gr.Markdown("# VLSI Expert — AI Chip Designer")
     gr.Markdown(
         "FFN-merged: Qwen2.5-Coder (generation) + DeepSeek-R1 (reasoning). "
@@ -88,9 +88,9 @@ with gr.Blocks(title="VLSI Expert — AI Chip Designer", theme=gr.themes.Soft())
 
     with gr.Tabs():
         with gr.TabItem("Verilog RTL"):
-            rtl = gr.Code(label="Generated Verilog", language="verilog", lines=18)
+            rtl = gr.Code(label="Generated Verilog", language="c", lines=18)
         with gr.TabItem("SDC Constraints"):
-            sdc_out = gr.Code(label="SDC Constraints", language="tcl", lines=10)
+            sdc_out = gr.Code(label="SDC Constraints", lines=10)
         with gr.TabItem("Report"):
             report_out = gr.Markdown()
 
