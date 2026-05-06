@@ -1,57 +1,97 @@
 #!/usr/bin/env python3
 """
-Bridge: Use VLSI Expert via vLLM endpoint with AgentIC pipeline.
+Bridge: Use VLSI Expert via remote API with AgentIC pipeline.
 
-1. Start vLLM:  python scripts/serve.py
-2. Build chip:  python scripts/build.py "8-bit counter with reset"
+Prerequisites:
+  1. Your VPS is running the model server:
+     python scripts/serve_fastapi.py  # or serve_vllm.py
 
-AgentIC's BuildOrchestrator calls the vLLM endpoint for every LLM request.
+  2. Your local .env points to the VPS:
+     export LLM_BASE_URL=http://YOUR_VPS_IP:8000/v1
+     export LLM_API_KEY=agentic-vlsi-expert-secure
+
+Usage:
+  python scripts/build.py "8-bit counter with reset"
+  python scripts/build.py "UART transmitter" --pdk sky130 --harden
 """
 
+import os
 import sys
 import argparse
 from pathlib import Path
 
-# Add AgentIC to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "AgentIC" / "src"))
-
 
 def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip_openlane: bool = True):
-    """Run AgentIC pipeline using VLSI Expert model via vLLM endpoint."""
-    from crewai import LLM
-    from agentic.orchestrator import BuildOrchestrator
+    """Run AgentIC pipeline using remote VLSI Expert model."""
+    try:
+        from crewai import LLM
+    except ImportError:
+        print("❌ CrewAI not installed. Install AgentIC first:")
+        print("   pip install agentic-ic")
+        sys.exit(1)
 
-    # Point to vLLM endpoint — vLLM serves OpenAI-compatible API
+    base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
+    api_key = os.environ.get("LLM_API_KEY", "agentic-vlsi-expert-secure")
+    model = os.environ.get("LLM_MODEL", "vlsi-expert")
+
+    # CrewAI LLM wrapper pointing to remote server
     llm = LLM(
-        model="vlsi-expert-merged",
-        base_url="http://localhost:7860/v1",
-        api_key="agentic-vlsi-expert-secure",  # Required by vLLM --api-key
+        model=f"openai/{model}",
+        base_url=base_url,
+        api_key=api_key,
         max_tokens=4096,
         temperature=0.2,
+        timeout=300,
+        num_retries=3,
     )
 
-    orch = BuildOrchestrator(
-        name=name,
-        desc=desc,
-        llm=llm,
-        pdk_profile=pdk,
-        skip_openlane=skip_openlane,
-        max_retries=3,
-        verbose=True,
-    )
+    print(f"🚀 Using remote model at {base_url}")
+    print(f"   This will send {desc!r} through AgentIC's pipeline...")
 
-    orch.run()
+    # AgentIC orchestrator integration
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "AgentIC" / "src"))
+        from agentic.orchestrator import BuildOrchestrator
 
-    if orch.state.name == "SUCCESS":
-        print(f"\n✅ Chip design complete!")
-        if not skip_openlane:
-            print(f"   GDSII: {orch.artifacts.get('gds', 'N/A')}")
-    else:
-        print(f"\n❌ Build failed: {orch.state.name}")
+        orch = BuildOrchestrator(
+            name=name,
+            desc=desc,
+            llm=llm,
+            pdk_profile=pdk,
+            skip_openlane=skip_openlane,
+            max_retries=3,
+            verbose=True,
+        )
+        orch.run()
+
+        if orch.state.name == "SUCCESS":
+            print(f"\n✅ Chip design complete!")
+        else:
+            print(f"\n❌ Build failed: {orch.state.name}")
+    except ImportError:
+        print("\n⚠️  AgentIC not found. Falling back to direct API call...")
+        import requests
+        r = requests.post(
+            f"{base_url}/chat/completions",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": f"Generate Verilog RTL for: {desc}\nTarget: {pdk}\n\nmodule"},
+                ],
+                "max_tokens": 800,
+                "temperature": 0.2,
+            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=300,
+        )
+        if r.status_code == 200:
+            print(r.json()["choices"][0]["message"]["content"])
+        else:
+            print(f"❌ API error: {r.status_code} {r.text[:500]}")
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Build chip with VLSI Expert via vLLM")
+    p = argparse.ArgumentParser(description="Build chip with VLSI Expert via remote API")
     p.add_argument("desc", help="Design description")
     p.add_argument("--name", default="expert_design")
     p.add_argument("--pdk", default="sky130")
@@ -59,10 +99,10 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     print("=" * 60)
-    print("  VLSI Expert + AgentIC Pipeline")
+    print("  VLSI Expert + AgentIC Pipeline (Remote)")
     print(f"  Design: {args.desc[:60]}")
     print(f"  PDK:    {args.pdk}")
-    print(f"  Model:  vLLM http://localhost:7860/v1")
+    print(f"  Model:  {os.environ.get('LLM_BASE_URL', 'http://localhost:8000/v1')}")
     print("=" * 60)
     print()
 

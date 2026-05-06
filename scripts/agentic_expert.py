@@ -1,54 +1,54 @@
 #!/usr/bin/env python3
 """
-Use VLSI Expert model with AgentIC pipeline.
-Creates a CrewAI-compatible LLM wrapper around the FFN-merged model.
+Use VLSI Expert model with AgentIC pipeline (Local or Remote).
+
+This script creates a CrewAI-compatible LLM wrapper that points to
+your remote VPS where the model is served via OpenAI-compatible API.
 
 Usage:
-  python agentic_expert.py "8-bit up counter with synchronous reset"
+  # Ensure .env has LLM_BASE_URL pointing to your VPS
+  export LLM_BASE_URL=http://YOUR_VPS_IP:8000/v1
+  export LLM_API_KEY=agentic-vlsi-expert-secure
+
+  python scripts/agentic_expert.py "8-bit up counter with synchronous reset"
 """
 
+import os
 import sys
 import argparse
 
-def load_model():
-    """Load the VLSI Expert model. Returns (model, tokenizer)."""
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    model = AutoModelForCausalLM.from_pretrained(
-        "vxkyyy/vlsi-moe-ffn-merged",
-        device_map="auto",
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-    )
-    tokenizer = AutoTokenizer.from_pretrained("vxkyyy/vlsi-moe-ffn-merged")
-    tokenizer.pad_token = tokenizer.eos_token
-    return model, tokenizer
-
 
 def generate(desc: str, pdk: str = "sky130", freq: int = 100) -> str:
-    """Generate Verilog RTL from a natural language description."""
-    model, tok = load_model()
+    """Generate Verilog RTL via OpenAI-compatible API (local or remote)."""
+    import requests
 
-    prompt = (
-        f"Generate correct, synthesizable Verilog RTL for the following specification.\n"
-        f"Target: {pdk} PDK at {freq}MHz.\n\n"
-        f"### Specification\n{desc}\n\n### Verilog RTL\nmodule"
+    base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
+    api_key = os.environ.get("LLM_API_KEY", "agentic-vlsi-expert-secure")
+    model = os.environ.get("LLM_MODEL", "vlsi-expert")
+
+    # Ensure base_url ends with /v1
+    if not base_url.endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
+
+    response = requests.post(
+        f"{base_url}/chat/completions",
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a VLSI design expert. Generate synthesizable Verilog RTL."},
+                {"role": "user", "content": f"Generate correct, synthesizable Verilog RTL for: {desc}\nTarget: {pdk} PDK at {freq}MHz.\n\nmodule"},
+            ],
+            "max_tokens": 800,
+            "temperature": 0.2,
+        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        timeout=300,
     )
 
-    inputs = tok(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        out = model.generate(
-            **inputs,
-            max_new_tokens=800,
-            temperature=0.2,
-            do_sample=True,
-            pad_token_id=tok.eos_token_id,
-            use_cache=False,
-        )
+    if response.status_code != 200:
+        raise RuntimeError(f"API error {response.status_code}: {response.text[:500]}")
 
-    verilog = tok.decode(out[0], skip_special_tokens=True)
-    return verilog
+    return response.json()["choices"][0]["message"]["content"]
 
 
 def main():
@@ -62,16 +62,20 @@ def main():
     print("  VLSI Expert — AI Chip Designer")
     print(f"  Spec: {args.desc[:60]}")
     print(f"  PDK: {args.pdk} at {args.freq}MHz")
+    print(f"  API: {os.environ.get('LLM_BASE_URL', 'http://localhost:8000/v1')}")
     print("=" * 60)
     print()
 
-    verilog = generate(args.desc, args.pdk, args.freq)
-
-    print("### Generated Verilog RTL ###\n")
-    print(verilog)
-    print(f"\n{'='*60}")
-    print(f"  Lines: {len(verilog.splitlines())}")
-    print("=" * 60)
+    try:
+        verilog = generate(args.desc, args.pdk, args.freq)
+        print("### Generated Verilog RTL ###\n")
+        print(verilog)
+        print(f"\n{'='*60}")
+        print(f"  Lines: {len(verilog.splitlines())}")
+        print("=" * 60)
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

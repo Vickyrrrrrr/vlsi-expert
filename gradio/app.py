@@ -8,8 +8,8 @@ from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Auto-detect: local disk model or HuggingFace Hub
-LOCAL = Path("models/vlsi-moe-ffn-merged/merged").exists()
-MODEL_PATH = "models/vlsi-moe-ffn-merged/merged" if LOCAL else "vxkyyy/vlsi-moe-ffn-merged"
+LOCAL = Path("models/vlsi-moe-ffn-merged-formal").exists()
+MODEL_PATH = "models/vlsi-moe-ffn-merged-formal" if LOCAL else "vxkyyy/vlsi-moe-ffn-merged-formal"
 
 print(f"Loading VLSI Expert model from {'LOCAL disk' if LOCAL else 'HF Hub'}: {MODEL_PATH}...")
 model = AutoModelForCausalLM.from_pretrained(
@@ -58,8 +58,8 @@ def design_chip(spec: str, pdk: str, freq: int, width: int = 8) -> tuple:
         f"**Design Generated**\n\n"
         f"- PDK: {pdk}\n- Clock: {freq}MHz\n- Width: {width}-bit\n"
         f"- Lines: {len(verilog.splitlines())}\n\n"
-        f"**Model:** FFN-merged Qwen2.5-Coder-32B + DeepSeek-R1-32B\n"
-        f"**Method:** DARE+TIES FFN-only merge | MI300X | ROCm 7.2"
+        f"**Model:** vlsi-moe-ffn-merged-formal (33B, LoRA fine-tuned)\n"
+        f"**Method:** DARE+TIES merge + SVA LoRA | MI300X | ROCm 6.2"
     )
     return verilog, sdc, report
 

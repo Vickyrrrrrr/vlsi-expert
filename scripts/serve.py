@@ -1,75 +1,47 @@
 #!/usr/bin/env python3
 """
-Serve VLSI Expert MoE via vLLM on AMD MI300X + ROCm 7.2.
-Starts OpenAI-compatible API on port 8000.
-
-AgentIC can then use: --model vxkyyy/vlsi-moe-ffn-merged --base-url http://localhost:8000/v1
+VLSI Expert — Unified Server Launcher
+Auto-detects vLLM availability and launches the best option.
 
 Usage:
-  python scripts/serve.py              # Start server
-  python scripts/serve.py --test       # Quick test the endpoint
+  python scripts/serve.py              # Auto-detect and start
+  python scripts/serve.py --fastapi    # Force FastAPI fallback
+  python scripts/serve.py --vllm       # Force vLLM
+  python scripts/serve.py --test       # Test running endpoint
 """
 
 import argparse
 import sys
 import subprocess
-from pathlib import Path
-
-MODEL_PATH = str(Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged")
-PORT = 7860
-API_KEY = "agentic-vlsi-expert-secure"  # Change this to your own key
 
 
-def start():
-    print("=" * 60)
-    print("  VLSI Expert — vLLM Server (MI300X + ROCm 7.2)")
-    print(f"  Model: {MODEL_PATH}")
-    print(f"  Port:  {PORT}")
-    print(f"  Endpoint: http://0.0.0.0:{PORT}/v1/completions")
-    print(f"  API Key:  {API_KEY}")
-    print("=" * 60)
+def main():
+    p = argparse.ArgumentParser(description="VLSI Expert Server Launcher")
+    p.add_argument("--fastapi", action="store_true", help="Force FastAPI fallback")
+    p.add_argument("--vllm", action="store_true", help="Force vLLM")
+    p.add_argument("--test", action="store_true", help="Test endpoint")
+    p.add_argument("--port", type=int, default=8000)
+    args = p.parse_args()
 
-    cmd = [
-        sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-        "--model", MODEL_PATH,
-        "--dtype", "bfloat16",
-        "--max-model-len", "8192",
-        "--gpu-memory-utilization", "0.85",
-        "--tensor-parallel-size", "1",
-        "--port", str(PORT),
-        "--host", "0.0.0.0",          # Public access (protected by API key + firewall)
-        "--api-key", API_KEY,         # Required in every request header
-    ]
-    subprocess.run(cmd)
+    if args.test:
+        subprocess.run([sys.executable, "scripts/serve_vllm.py", "--test", "--port", str(args.port)])
+        return
 
+    use_vllm = args.vllm
+    if not args.fastapi and not args.vllm:
+        try:
+            import vllm
+            use_vllm = True
+            print(f"✅ vLLM detected ({vllm.__version__}). Using production server.")
+        except ImportError:
+            print("⚠️  vLLM not found. Using FastAPI fallback.")
+            use_vllm = False
 
-def test():
-    import requests
-    print(f"Testing vLLM at http://localhost:{PORT}/v1/completions...")
-    payload = {
-        "model": MODEL_PATH,
-        "prompt": "Generate Verilog for an 8-bit counter with synchronous reset\n\nmodule",
-        "max_tokens": 200,
-        "temperature": 0.2,
-    }
-    try:
-        r = requests.post(
-            f"http://localhost:{PORT}/v1/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            timeout=30,
-        )
-        if r.status_code == 200:
-            text = r.json()["choices"][0]["text"]
-            print(f"✅ Response: module{text[:200]}...")
-        else:
-            print(f"❌ HTTP {r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        print(f"❌ {e}")
+    if use_vllm:
+        subprocess.run([sys.executable, "scripts/serve_vllm.py", "--local", "--port", str(args.port)])
+    else:
+        subprocess.run([sys.executable, "scripts/serve_fastapi.py", "--local", "--port", str(args.port)])
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--test", action="store_true")
-    args = p.parse_args()
-    test() if args.test else start()
+    main()

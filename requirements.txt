@@ -1,7 +1,14 @@
-torch
-transformers
+torch==2.5.1+rocm6.2
+torchvision
+ transformers>=4.49.0
 accelerate
 bitsandbytes
 peft
-gradio
+datasets
+trl
+ gradio
 huggingface_hub
+ fastapi
+uvicorn
+pydantic
+ requests
