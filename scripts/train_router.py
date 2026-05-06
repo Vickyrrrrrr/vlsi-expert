@@ -37,12 +37,13 @@ def route(task_text: str) -> int:
     """Route a prompt to the correct expert.
     Returns: 0 = coder, 1 = reason/instruct"""
     text = task_text.lower()
-    for pattern in ROUTES["coder"]:
-        if pattern in text:
-            return 0
+    # Check reason patterns FIRST (they're more specific — fix/error/analyze)
     for pattern in ROUTES["reason_instruct"]:
         if pattern in text:
             return 1
+    for pattern in ROUTES["coder"]:
+        if pattern in text:
+            return 0
     return 0  # Default to coder
 
 
