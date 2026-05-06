@@ -7,7 +7,7 @@ Prerequisites:
      python scripts/serve_fastapi.py  # or serve_vllm.py
 
   2. Your local .env points to the VPS:
-     export LLM_BASE_URL=http://YOUR_VPS_IP:8000/v1
+     export LLM_BASE_URL=http://YOUR_VPS_IP:8001/v1
      export LLM_API_KEY=agentic-vlsi-expert-secure
 
 Usage:
@@ -21,6 +21,28 @@ import argparse
 from pathlib import Path
 
 
+def _strip_markdown(text: str, keyword: str = "module") -> str:
+    """Strip markdown code blocks and conversational wrappers."""
+    text = text.strip()
+    if "```" in text:
+        lines = text.splitlines()
+        code_lines = []
+        in_code = False
+        for line in lines:
+            if line.strip().startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code:
+                code_lines.append(line)
+        if code_lines:
+            text = "\n".join(code_lines)
+    if not text.startswith(keyword):
+        idx = text.find(keyword)
+        if idx != -1:
+            text = text[idx:]
+    return text.strip()
+
+
 def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip_openlane: bool = True):
     """Run AgentIC pipeline using remote VLSI Expert model."""
     try:
@@ -30,7 +52,7 @@ def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip
         print("   pip install agentic-ic")
         sys.exit(1)
 
-    base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
+    base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8001/v1")
     api_key = os.environ.get("LLM_API_KEY", "agentic-vlsi-expert-secure")
     model = os.environ.get("LLM_MODEL", "vlsi-expert")
 
@@ -76,6 +98,7 @@ def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip
             json={
                 "model": model,
                 "messages": [
+                    {"role": "system", "content": "You are a VLSI design compiler. Output ONLY raw synthesizable Verilog RTL code. No explanation, no markdown, no comments, no conversational text. Start with 'module' and end with 'endmodule'."},
                     {"role": "user", "content": f"Generate Verilog RTL for: {desc}\nTarget: {pdk}\n\nmodule"},
                 ],
                 "max_tokens": 800,
@@ -85,7 +108,8 @@ def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip
             timeout=300,
         )
         if r.status_code == 200:
-            print(r.json()["choices"][0]["message"]["content"])
+            verilog = _strip_markdown(r.json()["choices"][0]["message"]["content"], "module")
+            print(verilog)
         else:
             print(f"❌ API error: {r.status_code} {r.text[:500]}")
 
@@ -102,7 +126,7 @@ if __name__ == "__main__":
     print("  VLSI Expert + AgentIC Pipeline (Remote)")
     print(f"  Design: {args.desc[:60]}")
     print(f"  PDK:    {args.pdk}")
-    print(f"  Model:  {os.environ.get('LLM_BASE_URL', 'http://localhost:8000/v1')}")
+    print(f"  Model:  {os.environ.get('LLM_BASE_URL', 'http://localhost:8001/v1')}")
     print("=" * 60)
     print()
 

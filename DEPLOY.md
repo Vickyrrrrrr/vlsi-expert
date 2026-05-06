@@ -7,7 +7,7 @@ Deploy VLSI Expert on **AMD Developer Cloud** (or any MI300X VPS) and call it fr
 ```
 ┌─────────────────────┐      HTTP/API      ┌──────────────────────────┐
 │ Your Laptop / WSL   │  ───────────────►  │ AMD MI300X VPS           │
-│ AgentIC, chip.py    │    API Key         │ Model Server (Port 8000) │
+│ AgentIC, chip.py    │    API Key         │   Model Server (Port 8001) │
 │ Local .env          │                    │ ROCm + PyTorch           │
 └─────────────────────┘                    └──────────────────────────┘
 ```
@@ -38,7 +38,7 @@ This handles everything: venv, ROCm PyTorch, model download (~66GB), server star
 ### 3. Verify Server
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 # → {"status":"ok","model_loaded":true,"backend":"fastapi+transformers"}
 ```
 
@@ -80,7 +80,7 @@ cd vlsi-expert
 
 ```bash
 # Terminal 1: Create tunnel
-ssh -N -L 8000:localhost:8000 -i ~/.ssh/id_ed25519 ubuntu@YOUR_VPS_IP
+ssh -N -L 8000:localhost:8001 -i ~/.ssh/id_ed25519 ubuntu@YOUR_VPS_IP
 
 # Terminal 2: Use localhost
 export VLSI_EXPERT_HOST=localhost
@@ -101,7 +101,7 @@ python scripts/chip.py "8-bit counter"
 
 Create `~/.env` or export:
 ```bash
-export LLM_BASE_URL=http://YOUR_VPS_IP:8000/v1
+export LLM_BASE_URL=http://YOUR_VPS_IP:8001/v1
 export LLM_API_KEY=agentic-vlsi-expert-secure
 export LLM_MODEL=vlsi-expert
 export SKIP_OPENLANE=1
@@ -146,7 +146,7 @@ python scripts/serve.py --test
 | "Out of memory" on model load | Model is 66GB. Ensure MI300X has free VRAM. Kill other GPU processes. |
 | vLLM won't start | ROCm vLLM binary may be missing. Fallback: `python scripts/serve_fastapi.py` |
 | "Invalid API key" | Check `VLSI_API_KEY` env var matches on both client and server |
-| Connection refused | Ensure server is running: `curl http://VPS_IP:8000/health` |
+| Connection refused | Ensure server is running: `curl http://VPS_IP:8001/health` |
 | Download too slow | Model is 66GB. Use `screen` or `tmux` so download survives disconnect. |
 | Firewall blocks port | Use SSH tunnel instead of opening ports |
 

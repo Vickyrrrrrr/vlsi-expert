@@ -47,7 +47,7 @@ Your Machine (Anywhere)          AMD Developer Cloud (MI300X)
 ./setup.sh  # Downloads model, starts server
 
 # On your laptop
-export LLM_BASE_URL=http://VPS_IP:8000/v1
+export LLM_BASE_URL=http://VPS_IP:8001/v1
 export LLM_API_KEY=agentic-vlsi-expert-secure
 agentic build --name counter --desc "8-bit counter" --skip-openlane
 ```
@@ -189,7 +189,7 @@ python scripts/chip.py "8-bit counter"
 ### AgentIC Integration
 ```bash
 # .env on your local machine
-LLM_BASE_URL=http://YOUR_VPS_IP:8000/v1
+LLM_BASE_URL=http://YOUR_VPS_IP:8001/v1
 LLM_API_KEY=agentic-vlsi-expert-secure
 LLM_MODEL=vlsi-expert
 

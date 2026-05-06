@@ -6,11 +6,11 @@ Call your model running on VPS from your local machine.
 Setup:
   1. Set env vars in .env:
      VLSI_EXPERT_HOST=YOUR_VPS_IP
-     VLSI_EXPERT_PORT=8000
+     VLSI_EXPERT_PORT=8001
      VLSI_EXPERT_KEY=agentic-vlsi-expert-secure
 
   2. Or use SSH tunnel (recommended):
-     ssh -N -L 8000:localhost:8000 -i ~/.ssh/id_ed25519 ubuntu@YOUR_VPS_IP
+     ssh -N -L 8001:localhost:8001 -i ~/.ssh/id_ed25519 ubuntu@YOUR_VPS_IP
      # Then VLSI_EXPERT_HOST=localhost
 
 Usage:
@@ -24,7 +24,7 @@ import requests
 
 # Config from environment
 VPS_HOST = os.environ.get("VLSI_EXPERT_HOST", "localhost")
-VPS_PORT = os.environ.get("VLSI_EXPERT_PORT", "8000")
+VPS_PORT = os.environ.get("VLSI_EXPERT_PORT", "8001")
 API_KEY = os.environ.get("VLSI_EXPERT_KEY", "agentic-vlsi-expert-secure")
 BASE_URL = f"http://{VPS_HOST}:{VPS_PORT}"
 
@@ -38,7 +38,7 @@ def design_chip(desc: str, pdk: str = "sky130", freq: int = 100) -> str:
         json={
             "model": "vlsi-expert",
             "messages": [
-                {"role": "system", "content": "You are a VLSI design expert. Generate synthesizable Verilog RTL. Output only the code."},
+                {"role": "system", "content": "You are a VLSI design compiler. Output ONLY raw synthesizable Verilog RTL code. No explanation, no markdown, no comments, no conversational text. Start with 'module' and end with 'endmodule'."},
                 {"role": "user", "content": f"Generate correct, synthesizable Verilog RTL for: {desc}\nTarget: {pdk} PDK at {freq}MHz.\n\nmodule"},
             ],
             "max_tokens": 800,
@@ -52,6 +52,29 @@ def design_chip(desc: str, pdk: str = "sky130", freq: int = 100) -> str:
         return f"❌ Model error: HTTP {rtl_response.status_code}\n{rtl_response.text[:500]}"
 
     verilog = rtl_response.json()["choices"][0]["message"]["content"].strip()
+    
+    # Strip markdown code blocks if present
+    if "```" in verilog:
+        lines = verilog.splitlines()
+        code_lines = []
+        in_code = False
+        for line in lines:
+            if line.strip().startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code:
+                code_lines.append(line)
+        if code_lines:
+            verilog = "\n".join(code_lines)
+    
+    # Ensure it starts with module
+    if not verilog.startswith("module"):
+        # Try to find module keyword
+        idx = verilog.find("module")
+        if idx != -1:
+            verilog = verilog[idx:]
+    
+    verilog = verilog.strip()
 
     # Part 2: Generate SDC constraints
     sdc_response = requests.post(
@@ -59,8 +82,8 @@ def design_chip(desc: str, pdk: str = "sky130", freq: int = 100) -> str:
         json={
             "model": "vlsi-expert",
             "messages": [
-                {"role": "system", "content": "You generate SDC timing constraints for Verilog modules."},
-                {"role": "user", "content": f"Generate SDC timing constraints for this Verilog module. Clock: {freq}MHz. PDK: {pdk}.\n\n```verilog\n{verilog[:1500]}\n```\n\nOutput ONLY SDC commands:"},
+                {"role": "system", "content": "You generate SDC timing constraints. Output ONLY raw SDC commands. No explanation, no markdown, no comments."},
+                {"role": "user", "content": f"Generate SDC timing constraints for this Verilog module. Clock: {freq}MHz. PDK: {pdk}.\n\n{verilog[:1500]}\n\nOutput ONLY SDC commands:"},
             ],
             "max_tokens": 400,
             "temperature": 0.1,

@@ -56,12 +56,12 @@ export VLSI_EXPERT_PORT=8000
 python scripts/chip.py "8-bit counter with synchronous reset"
 
 # Option B: SSH Tunnel (more secure)
-ssh -N -L 8000:localhost:8000 -i ~/.ssh/id_ed25519 ubuntu@YOUR_VPS_IP
+ssh -N -L 8000:localhost:8001 -i ~/.ssh/id_ed25519 ubuntu@YOUR_VPS_IP
 export VLSI_EXPERT_HOST=localhost
 python scripts/chip.py "8-bit counter with synchronous reset"
 
 # Option C: AgentIC Pipeline
-export LLM_BASE_URL=http://YOUR_VPS_IP:8000/v1
+export LLM_BASE_URL=http://YOUR_VPS_IP:8001/v1
 export LLM_API_KEY=agentic-vlsi-expert-secure
 export LLM_MODEL=vlsi-expert
 agentic build --name counter --desc "8-bit counter" --skip-openlane
@@ -75,7 +75,7 @@ The server exposes OpenAI-compatible endpoints:
 
 ### `POST /v1/chat/completions`
 ```bash
-curl http://YOUR_VPS_IP:8000/v1/chat/completions \
+curl http://YOUR_VPS_IP:8001/v1/chat/completions \
   -H "Authorization: Bearer agentic-vlsi-expert-secure" \
   -H "Content-Type: application/json" \
   -d '{
@@ -88,7 +88,7 @@ curl http://YOUR_VPS_IP:8000/v1/chat/completions \
 
 ### `POST /v1/completions` (legacy)
 ```bash
-curl http://YOUR_VPS_IP:8000/v1/completions \
+curl http://YOUR_VPS_IP:8001/v1/completions \
   -H "Authorization: Bearer agentic-vlsi-expert-secure" \
   -H "Content-Type: application/json" \
   -d '{

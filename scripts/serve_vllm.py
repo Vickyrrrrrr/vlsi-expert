@@ -17,7 +17,7 @@ Usage:
   python scripts/serve_vllm.py --model vxkyyy/vlsi-moe-ffn-merged-formal
 
 Test:
-  curl http://localhost:8000/v1/chat/completions \\
+  curl http://localhost:8001/v1/chat/completions \\
     -H "Content-Type: application/json" \\
     -H "Authorization: Bearer agentic-vlsi-expert-secure" \\
     -d '{"model":"vlsi-expert","messages":[{"role":"user","content":"Generate an 8-bit counter"}],"max_tokens":800}'
