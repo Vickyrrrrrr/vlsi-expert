@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""VLSI Expert — Gradio Demo. Uses locally merged FFN model."""
+"""VLSI Expert — Gradio Demo. Uses local FFN model or loads from HF Hub."""
 
+import os
 import gradio as gr
 import torch
+from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_PATH = "models/vlsi-moe-ffn-merged/merged"
+# Auto-detect: local disk model or HuggingFace Hub
+LOCAL = Path("models/vlsi-moe-ffn-merged/merged").exists()
+MODEL_PATH = "models/vlsi-moe-ffn-merged/merged" if LOCAL else "vxkyyy/vlsi-moe-ffn-merged"
 
-print(f"Loading VLSI Expert model from {MODEL_PATH}...")
+print(f"Loading VLSI Expert model from {'LOCAL disk' if LOCAL else 'HF Hub'}: {MODEL_PATH}...")
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_PATH, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True,
+    MODEL_PATH,
+    device_map="auto",
+    torch_dtype=torch.bfloat16,
+    trust_remote_code=True,
+    local_files_only=LOCAL,
 )
-tok = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+tok = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=LOCAL)
 tok.pad_token = tok.eos_token
 print("✅ Model loaded!")
 
