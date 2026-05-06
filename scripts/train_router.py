@@ -148,14 +148,24 @@ def main():
 
     # Extract embeddings for training
     print("  Extracting embeddings...")
+    tokenizer.pad_token = tokenizer.eos_token  # Required for padding
     embeddings = []
     for i, text in enumerate(texts):
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
+        # Pad all inputs to same length to avoid empty tensor issues
+        inputs = tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            padding="max_length",
+            max_length=128,
+        )
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         with torch.no_grad():
             outputs = model(**inputs, output_hidden_states=True)
-            # Use last hidden state
             hidden = outputs.hidden_states[-1]
+            # Average over non-padding tokens only
+            mask = inputs["attention_mask"].unsqueeze(-1)
+            hidden = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
             embeddings.append(hidden.cpu())
 
         if (i + 1) % 50 == 0:
