@@ -22,7 +22,7 @@ python scripts/serve.py &
 sleep 5
 
 # Set AgentIC env vars to use your model
-export LLM_BASE_URL=http://localhost:8000/v1
+export LLM_BASE_URL=http://localhost:7860/v1
 export LLM_MODEL=vlsi-expert
 export LLM_API_KEY=agentic-vlsi-expert-secure
 export OPENLANE_ROOT=/root/vlsi-expert

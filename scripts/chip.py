@@ -4,7 +4,7 @@ Lightweight client — call your VLSI Expert model from your local machine.
 No AgentIC, no heavy deps. Just Python + requests.
 
 Setup (run once):
-  ssh -N -L 8000:localhost:8000 -i ~/.ssh/id_ed25519 root@129.212.179.250 &
+  ssh -N -L 7860:localhost:7860 -i ~/.ssh/id_ed25519 root@129.212.179.250 &
   
 Then use:
   python3 chip.py "8-bit counter with reset"
@@ -17,7 +17,7 @@ import requests
 
 # Point to your VPS. Change this to your VPS IP or set VLSI_EXPERT_HOST env var.
 VPS_HOST = os.environ.get("VLSI_EXPERT_HOST", "129.212.179.250")
-VLLM_URL = f"http://{VPS_HOST}:8000/v1/completions"
+VLLM_URL = f"http://{VPS_HOST}:7860/v1/completions"
 API_KEY = "agentic-vlsi-expert-secure"
 
 

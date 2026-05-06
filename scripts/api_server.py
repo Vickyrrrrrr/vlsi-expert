@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 # ── Config ────────────────────────────────────────────────────────────
 MODEL_PATH = str(Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged")
 API_KEY = "agentic-vlsi-expert-secure"
-PORT = 8000
+PORT = 7860
 
 # ── Global model holder ───────────────────────────────────────────────
 model = None

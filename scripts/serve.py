@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 MODEL_PATH = str(Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged")
-PORT = 8000
+PORT = 7860
 API_KEY = "agentic-vlsi-expert-secure"  # Change this to your own key
 
 

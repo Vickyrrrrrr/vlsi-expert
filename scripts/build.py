@@ -24,7 +24,7 @@ def build_chip(desc: str, name: str = "expert_design", pdk: str = "sky130", skip
     # Point to vLLM endpoint — vLLM serves OpenAI-compatible API
     llm = LLM(
         model="vlsi-expert-merged",
-        base_url="http://localhost:8000/v1",
+        base_url="http://localhost:7860/v1",
         api_key="agentic-vlsi-expert-secure",  # Required by vLLM --api-key
         max_tokens=4096,
         temperature=0.2,
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     print("  VLSI Expert + AgentIC Pipeline")
     print(f"  Design: {args.desc[:60]}")
     print(f"  PDK:    {args.pdk}")
-    print(f"  Model:  vLLM http://localhost:8000/v1")
+    print(f"  Model:  vLLM http://localhost:7860/v1")
     print("=" * 60)
     print()
 
