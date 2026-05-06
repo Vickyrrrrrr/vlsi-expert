@@ -1,165 +1,100 @@
 #!/usr/bin/env python3
-"""
-VLSI Expert — Gradio Demo for HuggingFace Spaces
-Loads both LoRA adapters + routes tasks to the right model head.
-"""
+"""VLSI Expert — Gradio Demo. Uses locally merged FFN model."""
 
 import gradio as gr
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
 
-# ── Model paths (update these after training) ──────────────────────────
-CODER_BASE = "Qwen/Qwen2.5-Coder-32B-Instruct"
-CODER_LORA = "Vickyrrrrrr/vlsi-coder-lora"
-INSTRUCT_BASE = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
-INSTRUCT_LORA = "Vickyrrrrrr/vlsi-instruct-lora"
+MODEL_PATH = "models/vlsi-moe-ffn-merged/merged"
 
-# ── Load models once on startup ────────────────────────────────────────
-print("Loading CODER model (Qwen2.5-Coder-32B + VLSI adapter)...")
-coder_base = AutoModelForCausalLM.from_pretrained(
-    CODER_BASE,
-    device_map="auto",
-    torch_dtype=torch.bfloat16,
-    trust_remote_code=True,
+print(f"Loading VLSI Expert model from {MODEL_PATH}...")
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_PATH, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True,
 )
-coder_model = PeftModel.from_pretrained(coder_base, CODER_LORA)
-coder_tok = AutoTokenizer.from_pretrained(CODER_BASE, trust_remote_code=True)
-
-print("Loading INSTRUCT model (DeepSeek-R1-32B + VLSI adapter)...")
-instruct_base = AutoModelForCausalLM.from_pretrained(
-    INSTRUCT_BASE,
-    device_map="auto",
-    torch_dtype=torch.bfloat16,
-    trust_remote_code=True,
-)
-instruct_model = PeftModel.from_pretrained(instruct_base, INSTRUCT_LORA)
-instruct_tok = AutoTokenizer.from_pretrained(INSTRUCT_BASE, trust_remote_code=True)
-
-print("✅ Both models loaded!")
+tok = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+tok.pad_token = tok.eos_token
+print("✅ Model loaded!")
 
 
-def generate_chip(
-    spec: str,
-    pdk: str,
-    freq_mhz: int,
-    width: int = 8,
-) -> tuple:
-    """Generate chip design from specification."""
-    # Route to CODER for RTL generation
-    coder_prompt = (
-        f"Generate synthesizable Verilog RTL for the following specification. "
-        f"PDK: {pdk}. Target clock: {freq_mhz}MHz. Data width: {width}-bit.\n\n"
-        f"Specification: {spec}\n\n"
-        f"Output ONLY the Verilog code in a ```verilog fence:"
+def design_chip(spec: str, pdk: str, freq: int, width: int = 8) -> tuple:
+    """Generate Verilog RTL + SDC from specification."""
+    prompt = (
+        f"Generate correct, synthesizable Verilog RTL for the following specification.\n"
+        f"Target: {pdk} PDK at {freq}MHz, {width}-bit data width.\n\n"
+        f"### Specification\n{spec}\n\n### Verilog RTL\nmodule"
     )
 
-    inputs = coder_tok(coder_prompt, return_tensors="pt").to(coder_model.device)
-
+    inputs = tok(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        outputs = coder_model.generate(
-            **inputs,
-            max_new_tokens=2048,
-            temperature=0.2,
-            do_sample=True,
-            top_p=0.9,
-            pad_token_id=coder_tok.eos_token_id,
+        out = model.generate(
+            **inputs, max_new_tokens=800, temperature=0.2,
+            do_sample=True, pad_token_id=tok.eos_token_id, use_cache=False,
         )
 
-    verilog = coder_tok.decode(outputs[0], skip_special_tokens=True)
-    verilog = verilog.split("```verilog")[-1].split("```")[0].strip() if "```verilog" in verilog else verilog
+    verilog = tok.decode(out[0], skip_special_tokens=True)
 
-    # Generate SDC constraints via INSTRUCT
+    # Generate SDC constraints
     sdc_prompt = (
-        f"Generate SDC timing constraints for this Verilog module. "
-        f"Clock: {freq_mhz}MHz. PDK: {pdk}.\n\n"
-        f"```verilog\n{verilog[:2000]}\n```\n\n"
-        f"Output ONLY SDC commands:"
+        f"Generate SDC timing constraints for this module. Clock: {freq}MHz. PDK: {pdk}.\n\n"
+        f"```verilog\n{verilog[:1500]}\n```\n\nSDC constraints:"
     )
-
-    sdc_inputs = instruct_tok(sdc_prompt, return_tensors="pt").to(instruct_model.device)
+    sdc_inputs = tok(sdc_prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        sdc_outputs = instruct_model.generate(
-            **sdc_inputs, max_new_tokens=512, temperature=0.1, do_sample=True
+        sdc_out = model.generate(
+            **sdc_inputs, max_new_tokens=300, temperature=0.1,
+            do_sample=True, pad_token_id=tok.eos_token_id, use_cache=False,
         )
-    sdc = instruct_tok.decode(sdc_outputs[0], skip_special_tokens=True)
+    sdc = tok.decode(sdc_out[0], skip_special_tokens=True)
 
-    # Build summary report
-    report = f"""## Synthesis Report
-
-**PDK:** {pdk}
-**Target Clock:** {freq_mhz}MHz
-**Data Width:** {width}-bit
-**Verilog Lines:** {len(verilog.split(chr(10)))}
-
-**Model Details:**
-- Coder: Qwen2.5-Coder-32B + VLSI QLoRA adapter (rank 64)
-- Instruct: DeepSeek-R1-Distill-Qwen-32B + VLSI QLoRA adapter (rank 32)
-- Trained on: 500+ verified Verilog pairs (VerilogEval v2, RTLLM)
-- Training method: QLoRA (4-bit quantization)
-- Each adapter: ~80 MB"""
-
+    report = (
+        f"**Design Generated**\n\n"
+        f"- PDK: {pdk}\n- Clock: {freq}MHz\n- Width: {width}-bit\n"
+        f"- Lines: {len(verilog.splitlines())}\n\n"
+        f"**Model:** FFN-merged Qwen2.5-Coder-32B + DeepSeek-R1-32B\n"
+        f"**Method:** DARE+TIES FFN-only merge | MI300X | ROCm 7.2"
+    )
     return verilog, sdc, report
 
 
-# ── Gradio Interface ───────────────────────────────────────────────────
 with gr.Blocks(title="VLSI Expert — AI Chip Designer", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# VLSI Expert — AI Chip Designer")
     gr.Markdown(
-        "Two specialized models for chip design: **Coder** (RTL generation) + "
-        "**Instruct** (error fixing, SDC, timing analysis). "
-        "QLoRA fine-tuned on 500+ verified public Verilog pairs.\n\n"
-        "[GitHub](https://github.com/Vickyrrrrrr/vlsi-expert) | "
-        "[HuggingFace](https://huggingface.co/Vickyrrrrrr)"
+        "FFN-merged: Qwen2.5-Coder (generation) + DeepSeek-R1 (reasoning). "
+        "DARE+TIES merge on FFN layers only. One model, both capabilities. "
+        "[GitHub](https://github.com/Vickyrrrrrr/vlsi-expert)"
     )
 
     with gr.Row():
         with gr.Column(scale=2):
             spec = gr.Textbox(
                 label="Chip Specification",
-                placeholder="Example: 8-bit up counter with synchronous reset and enable signal.\n"
-                           "Example: 32-bit pipelined multiplier with bypass and hazard detection.\n"
-                           "Example: UART transmitter at 115200 baud, 8 data bits, no parity, 1 stop bit.",
-                lines=4,
+                placeholder="8-bit up counter with synchronous reset and enable",
+                lines=3,
             )
             with gr.Row():
-                pdk = gr.Dropdown(
-                    ["sky130", "gf180mcu", "asap7", "nangate45", "freepdk45"],
-                    value="sky130",
-                    label="Target PDK",
-                )
-                freq = gr.Slider(
-                    10, 2000, value=100, step=10,
-                    label="Target Frequency (MHz)",
-                )
-                width = gr.Slider(
-                    4, 64, value=8, step=4,
-                    label="Data Width (bits)",
-                )
+                pdk = gr.Dropdown(["sky130", "gf180mcu", "asap7", "nangate45"], value="sky130", label="PDK")
+                freq = gr.Slider(10, 2000, value=100, step=10, label="Clock (MHz)")
+                width = gr.Slider(4, 64, value=8, step=4, label="Data Width")
             btn = gr.Button("Generate Chip Design", variant="primary", size="lg")
 
         with gr.Column(scale=1):
-            gr.Markdown("### How it works")
+            gr.Markdown("### Architecture")
             gr.Markdown(
-                "1. **Coder model** (Qwen2.5-Coder-32B) generates the Verilog RTL\n"
-                "2. **Instruct model** (DeepSeek-R1-32B) generates SDC constraints\n"
-                "3. Both models use QLoRA adapters trained on public Verilog benchmarks\n"
-                "4. Total LoRA weights: ~160 MB for both models"
+                "**Coder** (Qwen2.5-Coder-32B) — generates Verilog RTL\n"
+                "**Reason** (DeepSeek-R1-32B) — analyzes, fixes errors\n"
+                "FFN-only merge keeps attention from Coder\n"
+                "Both models' knowledge in one"
             )
 
     with gr.Tabs():
         with gr.TabItem("Verilog RTL"):
-            rtl_out = gr.Code(label="Generated Verilog", language="verilog", lines=20)
+            rtl = gr.Code(label="Generated Verilog", language="verilog", lines=18)
         with gr.TabItem("SDC Constraints"):
-            sdc_out = gr.Code(label="SDC Constraints", language="tcl", lines=15)
-        with gr.TabItem("Design Report"):
-            report_out = gr.Markdown(label="Report")
+            sdc_out = gr.Code(label="SDC Constraints", language="tcl", lines=10)
+        with gr.TabItem("Report"):
+            report_out = gr.Markdown()
 
-    btn.click(
-        fn=generate_chip,
-        inputs=[spec, pdk, freq, width],
-        outputs=[rtl_out, sdc_out, report_out],
-    )
+    btn.click(fn=design_chip, inputs=[spec, pdk, freq, width], outputs=[rtl, sdc_out, report_out])
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)
