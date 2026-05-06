@@ -216,7 +216,6 @@ def main():
         args=training_args,
         train_dataset=train_ds,
         processing_class=tokenizer,
-        max_seq_length=MAX_SEQ_LENGTH,
         formatting_func=format_advanced_prompt,
     )
     trainer.train()
