@@ -73,13 +73,18 @@ def extract_verilog(text: str) -> str:
 
 
 def evaluate_design(spec: str, model_name: str = "vlsi-moe") -> Dict:
-    """Evaluate one design through AgentIC pipeline via the vLLM model."""
+    """Evaluate one design through AgentIC pipeline via vLLM with CoT prompting."""
     print(f"  [{model_name}] Testing: {spec[:50]}...", end=" ", flush=True)
     start = time.time()
 
+    # Advanced CoT prompt — triggers DeepSeek-R1 reasoning in the merged model
     coder_prompt = (
-        f"Generate synthesizable, complete Verilog RTL with testbench for: {spec}\n\n"
-        f"Use SkyWater 130nm PDK. Output ONLY the code:"
+        "You are an expert VLSI design engineer. Analyze the design requirements "
+        "carefully, think through the architecture, then generate complete, "
+        "synthesizable Verilog RTL with a self-checking testbench. "
+        "Target: SkyWater 130nm PDK. Output the code in a ```verilog fence.\n\n"
+        f"### Design Specification\n{spec}\n\n"
+        "### Design Analysis\nDesign Type:"
     )
 
     result = {
