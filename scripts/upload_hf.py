@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 MODEL_PATH = Path(__file__).parent.parent / "models" / "vlsi-moe-ffn-merged" / "merged"
-HF_REPO = "Vickyrrrrrr/vlsi-moe-ffn-merged"
+HF_REPO = "vxkyyy/vlsi-moe-ffn-merged"
 
 print("Uploading VLSI Expert merged model to HuggingFace Hub...")
 print(f"  Local path:  {MODEL_PATH}")
