@@ -97,4 +97,4 @@ with gr.Blocks(title="VLSI Expert — AI Chip Designer") as demo:
     btn.click(fn=design_chip, inputs=[spec, pdk, freq, width], outputs=[rtl, sdc_out, report_out])
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=True)
