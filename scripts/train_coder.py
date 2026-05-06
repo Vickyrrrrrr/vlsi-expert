@@ -21,7 +21,7 @@ from datasets import Dataset
 from trl import SFTTrainer
 
 # ── Config ────────────────────────────────────────────────────────────
-BASE_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
+BASE_MODEL = str(Path(__file__).parent.parent / "models" / "vlsi-moe-merged" / "merged")
 OUTPUT_DIR = Path(__file__).parent.parent / "models" / "vlsi-coder-lora"
 DATA_PATH = Path(__file__).parent.parent / "data" / "train_pairs.jsonl"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,11 @@ def main():
     )
 
     # Load model + tokenizer
-    print("[2/4] Loading base model (Qwen2.5-Coder-32B-Instruct)...")
+    print(f"[2/4] Loading merged model ({BASE_MODEL})...")
+    if not Path(BASE_MODEL).exists():
+        print(f"  ERROR: Merged model not found at {BASE_MODEL}")
+        print("  Run: python scripts/merge_moe.py first")
+        sys.exit(1)
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         quantization_config=bnb_config,
