@@ -2,6 +2,15 @@
 
 **Assumes**: AMD MI300X droplet with ROCm 7.2.0, 192GB VRAM, 240GB RAM, 5TB NVMe scratch.
 
+## Context Retention: Sample Packing
+
+The 14B student is trained with **sample packing** — multiple reasoning triplets are concatenated into sequences up to **16,384 tokens** (PACK_MAX_SEQ_LEN), targeting **80% fill** per pack (PACK_TARGET_FILL). This forces the model to maintain its native long-context attention patterns during distillation. Each pack gets a single forward pass through teacher and student, with the loss computed only over effective (non-padding) tokens. Override via env vars:
+
+```bash
+export PACK_MAX_SEQ_LEN=8192    # shorter sequences if OOM
+export PACK_TARGET_FILL=0.85    # 85% fill target
+```
+
 ---
 
 ## What Each File Does

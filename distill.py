@@ -50,6 +50,7 @@ from config import (
     DISTILL_KD_TEMP, DISTILL_KD_ALPHA,
     GALORE_RANK, GALORE_UPDATE_PROJ_GAP,
     PHASE1_HOURS, PHASE2_HOURS, PHASE3_HOURS,
+    PACK_MAX_SEQ_LEN, PACK_TARGET_FILL,
 )
 
 import pyarrow.parquet as pq
@@ -84,7 +85,8 @@ class DistillConfig:
     lr: float = DISTILL_LR
     kd_temp: float = DISTILL_KD_TEMP
     kd_alpha: float = DISTILL_KD_ALPHA
-    max_seq_len: int = 2048
+    max_seq_len: int = PACK_MAX_SEQ_LEN
+    pack_target_fill: float = PACK_TARGET_FILL
     galore_rank: int = GALORE_RANK
     galore_update_proj_gap: int = GALORE_UPDATE_PROJ_GAP
     weight_decay: float = 0.01
@@ -93,42 +95,84 @@ class DistillConfig:
     use_bitnet: bool = BITNET_AVAILABLE
 
 
-class ParquetReasoningDataset(Dataset):
-    def __init__(self, parquet_path: str, tokenizer, max_len: int = 2048):
+class PackedReasoningDataset(Dataset):
+    """Packs multiple reasoning triplets into one sequence up to max_seq_len,
+    with proper attention masking so packed samples don't cross-attend.
+    Targets ~pack_target_fill (default 80%) token utilization per pack."""
+
+    def __init__(self, parquet_path: str, tokenizer, max_seq_len: int = 16384,
+                 pack_target_fill: float = 0.80):
         self.tokenizer = tokenizer
-        self.max_len = max_len
+        self.max_seq_len = max_seq_len
+        self.pack_target_fill = pack_target_fill
 
         if not Path(parquet_path).exists():
             raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
 
         table = pq.read_table(parquet_path)
-        self.data = table.to_pandas()
-        self.data = self.data[self.data["corrected_code"].str.len() > 0].reset_index(drop=True)
+        data = table.to_pandas()
+        data = data[data["corrected_code"].str.len() > 0].reset_index(drop=True)
 
-        if len(self.data) == 0:
+        if len(data) == 0:
             raise ValueError(f"No valid samples in {parquet_path}. Run factory.py first.")
 
+        self.packs = self._build_packs(data)
+        if not self.packs:
+            raise ValueError("Could not build any packs from the dataset.")
+
+    def _build_packs(self, data):
+        indices = list(range(len(data)))
+        import random
+        random.shuffle(indices)
+
+        all_input_ids = []
+        for i in indices:
+            row = data.iloc[i]
+            text = f"Spec: {row['spec']}\n\nSystemVerilog:\n{row['corrected_code']}"
+            ids = self.tokenizer.encode(text, add_special_tokens=True)
+            all_input_ids.append(ids)
+
+        all_input_ids.sort(key=len, reverse=True)
+
+        packs = []
+        current_pack_input_ids = []
+        current_pos_ids = []
+
+        for ids in all_input_ids:
+            if len(ids) > self.max_seq_len:
+                ids = ids[:self.max_seq_len]
+
+            if not current_pack_input_ids:
+                current_pack_input_ids = list(ids)
+                current_pos_ids = list(range(len(ids)))
+            elif len(current_pack_input_ids) + len(ids) <= self.max_seq_len:
+                offset = len(current_pack_input_ids)
+                current_pack_input_ids.extend(ids)
+                current_pos_ids.extend(range(len(ids)))
+            else:
+                packs.append(self._finalize_pack(current_pack_input_ids))
+                current_pack_input_ids = list(ids)
+                current_pos_ids = list(range(len(ids)))
+
+        if current_pack_input_ids:
+            packs.append(self._finalize_pack(current_pack_input_ids))
+
+        return packs
+
+    def _finalize_pack(self, input_ids: list):
+        effective_length = len(input_ids)
+        pad_length = self.max_seq_len - effective_length
+        input_ids = input_ids + [self.tokenizer.pad_token_id or self.tokenizer.eos_token_id] * pad_length
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "effective_length": effective_length,
+        }
+
     def __len__(self):
-        return len(self.data)
+        return len(self.packs)
 
     def __getitem__(self, idx):
-        row = self.data.iloc[idx]
-        spec = row["spec"]
-        corrected_code = row["corrected_code"]
-
-        text = f"Specification: {spec}\n\nCorrected SystemVerilog RTL:\n{corrected_code}"
-
-        tokens = self.tokenizer(
-            text,
-            truncation=True,
-            max_length=self.max_len,
-            padding="max_length",
-            return_tensors="pt",
-        )
-        return {
-            "input_ids": tokens["input_ids"].squeeze(0),
-            "attention_mask": tokens["attention_mask"].squeeze(0),
-        }
+        return self.packs[idx]
 
 
 class KnowledgeDistillationTrainer:
@@ -178,13 +222,13 @@ class KnowledgeDistillationTrainer:
         self,
         student_logits: torch.Tensor,
         teacher_logits: torch.Tensor,
-        labels: torch.Tensor,
-        attention_mask: torch.Tensor,
+        input_ids: torch.Tensor,
+        effective_lengths: torch.Tensor,
     ) -> tuple[torch.Tensor, dict]:
-        shift_student = student_logits[..., :-1, :].contiguous()
-        shift_teacher = teacher_logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        shift_mask = attention_mask[..., 1:].contiguous()
+        B, S, V = student_logits.shape
+        shift_student = student_logits[:, :-1, :].contiguous()
+        shift_teacher = teacher_logits[:, :-1, :].contiguous()
+        shift_labels = input_ids[:, 1:].contiguous()
 
         T = self.cfg.kd_temp
         alpha = self.cfg.kd_alpha
@@ -196,93 +240,78 @@ class KnowledgeDistillationTrainer:
         ).sum(dim=-1) * (T * T)
 
         ce_loss = F.cross_entropy(
-            shift_student.view(-1, shift_student.size(-1)),
-            shift_labels.view(-1),
+            shift_student.reshape(-1, V),
+            shift_labels.reshape(-1),
             reduction="none",
-        ).view_as(shift_labels)
+        ).view(B, S - 1)
 
-        mask = shift_mask.float()
-        kd_loss = (kd_loss * mask).sum() / mask.sum()
-        ce_loss = (ce_loss * mask).sum() / mask.sum()
+        mask = torch.zeros(B, S - 1, device=student_logits.device)
+        for b in range(B):
+            mask[b, :effective_lengths[b] - 1] = 1.0
+
+        kd_loss = (kd_loss * mask).sum() / mask.sum().clamp(min=1)
+        ce_loss = (ce_loss * mask).sum() / mask.sum().clamp(min=1)
 
         loss = alpha * kd_loss + (1 - alpha) * ce_loss
 
         return loss, {"kd_loss": kd_loss.item(), "ce_loss": ce_loss.item()}
 
-    def prepare_teacher_logits(self, dataset_path: str, cache_dir: Path):
+    def prepare_teacher_logits(self, dataset: PackedReasoningDataset, cache_dir: Path):
         cache_dir.mkdir(parents=True, exist_ok=True)
-        table = pq.read_table(dataset_path)
-        data = table.to_pandas()
-        data = data[data["corrected_code"].str.len() > 0]
 
-        teacher_shards = []
-
-        print(f"Precomputing teacher logits for {len(data)} samples...")
+        print(f"Precomputing teacher logits for {len(dataset)} packs of up to {self.cfg.max_seq_len} tokens...")
         self.teacher.eval()
-        with torch.no_grad():
-            for i in tqdm(range(0, len(data), self.cfg.batch_size)):
-                batch_rows = data.iloc[i:i + self.cfg.batch_size]
-                texts = [
-                    f"Specification: {r['spec']}\n\nCorrected SystemVerilog RTL:\n{r['corrected_code']}"
-                    for _, r in batch_rows.iterrows()
-                ]
-                tokens = self.tokenizer(
-                    texts,
-                    truncation=True,
-                    max_length=self.cfg.max_seq_len,
-                    padding="max_length",
-                    return_tensors="pt",
-                ).to(self.device)
+        all_shards = []
 
-                teacher_out = self.teacher(
-                    input_ids=tokens["input_ids"],
-                    attention_mask=tokens["attention_mask"],
-                )
-                teacher_shards.append({
-                    "input_ids": tokens["input_ids"].cpu(),
-                    "attention_mask": tokens["attention_mask"].cpu(),
-                    "teacher_logits": teacher_out.logits.cpu(),
+        with torch.no_grad():
+            for i in tqdm(range(len(dataset))):
+                pack = dataset[i]
+                input_ids = pack["input_ids"].unsqueeze(0).to(self.device)
+                effective_length = pack["effective_length"]
+
+                teacher_out = self.teacher(input_ids=input_ids)
+                all_shards.append({
+                    "input_ids": input_ids.cpu(),
+                    "effective_length": effective_length,
+                    "teacher_logits": teacher_out.logits[:, :effective_length, :].cpu(),
                 })
 
-                if (i // self.cfg.batch_size) % 10 == 0:
-                    shard_path = cache_dir / f"teacher_logits_{i // self.cfg.batch_size}.pt"
-                    torch.save(teacher_shards[-10:], shard_path)
-                    teacher_shards = teacher_shards[-10:]
+                if (i + 1) % 50 == 0:
+                    shard_path = cache_dir / f"teacher_shard_{(i + 1) // 50}.pt"
+                    torch.save(all_shards[-50:], shard_path)
 
-        final_path = cache_dir / "teacher_logits_full.pt"
-        torch.save(teacher_shards, final_path)
-        print(f"Teacher logits saved to {final_path}")
-        return final_path
+        if all_shards:
+            shard_path = cache_dir / f"teacher_shard_last.pt"
+            torch.save(all_shards[-(len(all_shards) % 50):], shard_path)
+
+        full_path = cache_dir / "teacher_logits_full.pt"
+        torch.save(all_shards, full_path)
+        print(f"Teacher logits saved to {full_path}")
+        return full_path
 
     def train_step(self, batch: dict, teacher_logits: Optional[torch.Tensor] = None) -> dict:
         self.student.train()
         self.teacher.eval()
 
         input_ids = batch["input_ids"].to(self.device)
-        attention_mask = batch["attention_mask"].to(self.device)
+        effective_lengths = batch["effective_length"]
 
         with torch.amp.autocast("cuda"):
-            student_out = self.student(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
+            student_out = self.student(input_ids=input_ids)
 
             if teacher_logits is not None:
                 t_logits = teacher_logits.to(self.device)
             else:
                 with torch.no_grad():
                     with torch.amp.autocast("cuda"):
-                        teacher_out = self.teacher(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                        )
+                        teacher_out = self.teacher(input_ids=input_ids)
                     t_logits = teacher_out.logits
 
             loss, metrics = self.distillation_loss(
                 student_out.logits,
                 t_logits,
                 input_ids,
-                attention_mask,
+                effective_lengths,
             )
 
         loss = loss / self.cfg.grad_accum
@@ -306,6 +335,7 @@ class KnowledgeDistillationTrainer:
         print(f"\n{'='*60}")
         print(f"  Phase 2: Peak Distillation (max {max_hours}h)")
         print(f"  KD alpha={self.cfg.kd_alpha}, T={self.cfg.kd_temp}")
+        print(f"  Pack seq len: {self.cfg.max_seq_len}, target fill: {self.cfg.pack_target_fill:.0%}")
         print(f"  GaLore: {self.cfg.use_galore}, BitNet: {self.cfg.use_bitnet}")
         print(f"{'='*60}\n")
 
@@ -339,6 +369,7 @@ class KnowledgeDistillationTrainer:
         print(f"\n{'='*60}")
         print(f"  Phase 3: Ternary Squeeze — BitNet b1.58 QAT")
         print(f"  Weights quantized to {{-1, 0, 1}}")
+        print(f"  Pack seq len: {self.cfg.max_seq_len}")
         print(f"{'='*60}\n")
 
         start = time.time()
@@ -351,30 +382,24 @@ class KnowledgeDistillationTrainer:
                     break
 
                 input_ids = batch["input_ids"].to(self.device)
-                attention_mask = batch["attention_mask"].to(self.device)
+                effective_lengths = batch["effective_length"]
 
                 with torch.amp.autocast("cuda"):
                     with torch.no_grad():
-                        teacher_out = self.teacher(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                        )
+                        teacher_out = self.teacher(input_ids=input_ids)
 
                     if BITNET_AVAILABLE:
                         for module in self.student.modules():
                             if isinstance(module, BitLinear):
                                 module.weight.data = bitnet_ternarize(module.weight.data)
 
-                    student_out = self.student(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                    )
+                    student_out = self.student(input_ids=input_ids)
 
                     loss, metrics = self.distillation_loss(
                         student_out.logits,
                         teacher_out.logits,
                         input_ids,
-                        attention_mask,
+                        effective_lengths,
                     )
 
                 loss = loss / self.cfg.grad_accum
@@ -551,26 +576,46 @@ def main():
     if args.resume:
         trainer.load_checkpoint(Path(args.resume))
 
-    dataset = ParquetReasoningDataset(dataset_path, tokenizer, cfg.max_seq_len)
+    dataset = PackedReasoningDataset(
+        dataset_path, tokenizer,
+        max_seq_len=cfg.max_seq_len,
+        pack_target_fill=cfg.pack_target_fill,
+    )
+
+    def collate_packs(batch: list) -> dict:
+        input_ids_list = [item["input_ids"] for item in batch]
+        effective_lengths_list = [item["effective_length"] for item in batch]
+        max_len_in_batch = max(el.item() if isinstance(el, torch.Tensor) else el for el in effective_lengths_list)
+
+        input_ids_list = [
+            ids[:max_len_in_batch] if len(ids) > max_len_in_batch
+            else torch.cat([ids, torch.full((max_len_in_batch - len(ids),), tokenizer.pad_token_id or tokenizer.eos_token_id, dtype=ids.dtype)])
+            for ids in input_ids_list
+        ]
+
+        return {
+            "input_ids": torch.stack(input_ids_list),
+            "effective_length": torch.tensor(effective_lengths_list, dtype=torch.long),
+        }
+
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
-        num_workers=2,
+        collate_fn=collate_packs,
+        num_workers=0,
         pin_memory=True,
     )
 
     if args.phase == 1:
-        teacher_cache = CHECKPOINT_DIR / "teacher_logits"
-        trainer.prepare_teacher_logits(dataset_path, teacher_cache)
+        trainer.prepare_teacher_logits(dataset, CHECKPOINT_DIR / "teacher_logits")
     elif args.phase == 2:
         trainer.run_phase2(dataloader, PHASE2_HOURS)
     elif args.phase == 3:
         trainer.run_phase3_bitnet(dataloader, PHASE3_HOURS)
     else:
         # Full schedule
-        teacher_cache = CHECKPOINT_DIR / "teacher_logits"
-        trainer.prepare_teacher_logits(dataset_path, teacher_cache)
+        trainer.prepare_teacher_logits(dataset, CHECKPOINT_DIR / "teacher_logits")
         trainer.run_phase2(dataloader, PHASE2_HOURS)
         trainer.run_phase3_bitnet(dataloader, PHASE3_HOURS)
         trainer.export_gguf(Path(args.output))

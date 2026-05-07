@@ -31,13 +31,15 @@ IVERILOG_ARGS = ["-g2012"]
 YOSYS_FORMAL_SCRIPT = "read_verilog -sv design.sv; prep -top {top}; check; write_smt2 -bv -stbv -wires design.smt2"
 Z3_TIMEOUT_MS = 30000
 
-DISTILL_BATCH_SIZE = int(os.environ.get("DISTILL_BATCH_SIZE", "2"))
-DISTILL_GRAD_ACCUM = int(os.environ.get("DISTILL_GRAD_ACCUM", "16"))
+DISTILL_BATCH_SIZE = int(os.environ.get("DISTILL_BATCH_SIZE", "1"))
+DISTILL_GRAD_ACCUM = int(os.environ.get("DISTILL_GRAD_ACCUM", "32"))
 DISTILL_LR = float(os.environ.get("DISTILL_LR", "2e-5"))
 DISTILL_KD_TEMP = float(os.environ.get("DISTILL_KD_TEMP", "4.0"))
 DISTILL_KD_ALPHA = float(os.environ.get("DISTILL_KD_ALPHA", "0.9"))
 GALORE_RANK = int(os.environ.get("GALORE_RANK", "128"))
 GALORE_UPDATE_PROJ_GAP = int(os.environ.get("GALORE_UPDATE_PROJ_GAP", "200"))
+PACK_MAX_SEQ_LEN = int(os.environ.get("PACK_MAX_SEQ_LEN", "16384"))
+PACK_TARGET_FILL = float(os.environ.get("PACK_TARGET_FILL", "0.80"))
 
 PHASE1_HOURS = 6
 PHASE2_HOURS = 18
