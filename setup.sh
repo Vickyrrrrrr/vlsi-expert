@@ -252,7 +252,7 @@ serve_teacher() {
         --api-key "${API_KEY}" \
         --served-model-name vlsi-expert-teacher \
         --enforce-eager \
-        --max-num-seqs 4
+        --max-num-seqs 4 || echo "Failed to start vLLM. Ensure it is installed and GPU is available."
 }
 
 serve_draft() {

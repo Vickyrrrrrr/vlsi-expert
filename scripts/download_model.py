@@ -23,13 +23,29 @@ def download(model_id: str, local_dir: str, token: str = None):
 
     print(f"Downloading {model_id}...")
     print(f"Target: {local_path.absolute()}")
-    print(f"This is ~66 GB and may take 20-60 minutes depending on connection.")
-    print("=" * 60)
+    
+    # Check disk space
+    import shutil
+    total, used, free = shutil.disk_usage(local_path.parent)
+    print(f"Available space: {free / 1e9:.1f} GB")
+    
+    # Some models are very large
+    if "32B" in model_id or "33B" in model_id:
+        print("⚠️ Warning: Large model detected (~66GB).")
+        if free < 70e9 and not str(local_path).startswith("/data"):
+            print("❌ Not enough space on ephemeral disk! Redirecting to /data or using cache only...")
+            # We can skip local_dir and let it stay in cache
+            local_dir = None
+            local_dir_use_symlinks = True
+        else:
+            local_dir_use_symlinks = False
+    else:
+        local_dir_use_symlinks = False
 
     snapshot_download(
         repo_id=model_id,
-        local_dir=str(local_path),
-        local_dir_use_symlinks=False,
+        local_dir=local_dir,
+        local_dir_use_symlinks=local_dir_use_symlinks,
         resume_download=True,
         token=token or os.environ.get("HF_TOKEN"),
     )

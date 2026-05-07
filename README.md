@@ -1,3 +1,14 @@
+---
+title: VLSI Expert
+emoji: 🚀
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 4.0.0
+app_file: app.py
+pinned: false
+---
+
 # Qwen-VLSI-SOTA-Sprint — SOTA VLSI Distiller v1
 
 **Distill a 33B VLSI MoE Teacher into a 14B Ternary Student on AMD MI300X.**

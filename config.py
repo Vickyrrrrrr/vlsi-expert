@@ -4,7 +4,15 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
-SCRATCH_DIR = Path(os.environ.get("VLSI_SCRATCH", "/scratch"))
+
+# HF Spaces persistent storage is at /data
+if os.path.exists("/data") and os.access("/data", os.W_OK):
+    SCRATCH_DIR = Path("/data")
+    # If on HF, we also want models to be in /data to avoid the 50GB limit
+    MODELS_DIR = Path("/data/models")
+else:
+    SCRATCH_DIR = Path(os.environ.get("VLSI_SCRATCH", ROOT / "scratch"))
+
 CHECKPOINT_DIR = SCRATCH_DIR / "checkpoints"
 DATASET_DIR = SCRATCH_DIR / "datasets"
 EXPERT_DISTILLED_DIR = MODELS_DIR / "qwen-vlsi-sota-14b-ternary"
