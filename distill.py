@@ -26,6 +26,7 @@ Usage:
 import argparse
 import json
 import os
+import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +35,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, IterableDataset
+from torch.utils.data import DataLoader, Dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -100,35 +101,45 @@ class PackedReasoningDataset(Dataset):
     with proper attention masking so packed samples don't cross-attend.
     Targets ~pack_target_fill (default 80%) token utilization per pack."""
 
-    def __init__(self, parquet_path: str, tokenizer, max_seq_len: int = 16384,
+    def __init__(self, data_path: str, tokenizer, max_seq_len: int = 16384,
                  pack_target_fill: float = 0.80):
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.pack_target_fill = pack_target_fill
+        data_path = Path(data_path)
 
-        if not Path(parquet_path).exists():
-            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+        if not data_path.exists():
+            raise FileNotFoundError(f"Data file not found: {data_path}")
 
-        table = pq.read_table(parquet_path)
-        data = table.to_pandas()
-        data = data[data["corrected_code"].str.len() > 0].reset_index(drop=True)
+        rows = []
+        if data_path.suffix == ".parquet":
+            import pyarrow.parquet as pq
+            table = pq.read_table(str(data_path))
+            rows = table.to_pandas().to_dict("records")
+        elif data_path.suffix == ".jsonl":
+            with open(data_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        rows.append(json.loads(line))
 
-        if len(data) == 0:
-            raise ValueError(f"No valid samples in {parquet_path}. Run factory.py first.")
+        if not rows:
+            raise ValueError(f"No valid samples in {data_path}. Run factory.py first.")
 
-        self.packs = self._build_packs(data)
+        self.packs = self._build_packs(rows)
         if not self.packs:
             raise ValueError("Could not build any packs from the dataset.")
 
-    def _build_packs(self, data):
-        indices = list(range(len(data)))
-        import random
-        random.shuffle(indices)
+    def _build_packs(self, rows):
+        random.shuffle(rows)
 
         all_input_ids = []
-        for i in indices:
-            row = data.iloc[i]
-            text = f"Spec: {row['spec']}\n\nSystemVerilog:\n{row['corrected_code']}"
+        for row in rows:
+            spec = row.get("spec", "")
+            corrected_code = row.get("corrected_code", "")
+            if not corrected_code:
+                continue
+            text = f"Spec: {spec}\n\nSystemVerilog:\n{corrected_code}"
             ids = self.tokenizer.encode(text, add_special_tokens=True)
             all_input_ids.append(ids)
 

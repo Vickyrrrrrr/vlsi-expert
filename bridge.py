@@ -39,7 +39,7 @@ from config import (
     TEACHER_PORT, DRAFT_PORT, BRIDGE_PORT,
 )
 
-TRIPLETS_PARQUET = DATASET_DIR / "reasoning_triplets.parquet"
+TRIPLETS_DATA = DATASET_DIR / "reasoning_triplets.jsonl"
 
 
 @dataclass
@@ -140,26 +140,29 @@ def load_metrics() -> dict:
         "tokens_per_second": 0.0,
     }
 
-    if TRIPLETS_PARQUET.exists():
+    if TRIPLETS_DATA.exists():
         try:
-            import pyarrow.parquet as pq
-            table = pq.read_table(TRIPLETS_PARQUET)
-            df = table.to_pandas()
-            metrics["total_samples"] = len(df)
-            metrics["successful_refactors"] = int((df["verification_stage"] == "all-passed").sum())
+            rows = []
+            with open(TRIPLETS_DATA) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        rows.append(json.loads(line))
+            metrics["total_samples"] = len(rows)
+            metrics["successful_refactors"] = sum(
+                1 for r in rows if r.get("verification_stage") == "all-passed"
+            )
             metrics["proof_density"] = (
                 metrics["successful_refactors"] / max(metrics["total_samples"], 1)
             )
-            metrics["avg_refactors"] = float(df["num_refactors"].mean()) if len(df) > 0 else 0
-            metrics["avg_time_sec"] = float(df["total_time_sec"].mean()) if len(df) > 0 else 0
+            metrics["avg_refactors"] = (
+                sum(r.get("num_refactors", 0) for r in rows) / max(len(rows), 1)
+            )
+            metrics["avg_time_sec"] = (
+                sum(r.get("total_time_sec", 0) for r in rows) / max(len(rows), 1)
+            )
         except Exception:
             pass
-
-    try:
-        import pyarrow.parquet as pq
-        del pq
-    except ImportError:
-        pass
 
     return metrics
 

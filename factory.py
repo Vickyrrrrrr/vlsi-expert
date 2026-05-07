@@ -30,14 +30,11 @@ import tempfile
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 from openai import AsyncOpenAI
 from tqdm.asyncio import tqdm_asyncio
 
@@ -50,14 +47,14 @@ from config import (
 )
 
 STATUS_FILE = CHECKPOINT_DIR / "factory_checkpoint.json"
-TRIPLETS_PARQUET = DATASET_DIR / "reasoning_triplets.parquet"
+TRIPLETS_JSONL = DATASET_DIR / "reasoning_triplets.jsonl"
 PARQUET_LOCK = threading.Lock()
 
 SYSTEM_PROMPT = (
     "You are a VLSI design compiler. Output ONLY raw synthesizable SystemVerilog RTL code "
-    "and formal SystemVerilog Assertions (SVA). No explanation, no markdown, no comments "
-    "that are not part of the code. Start with the module definition. "
-    "Include SVA properties inside the module for formal verification."
+    "and formal SystemVerilog Assertions (SVA). Start with the module definition. "
+    "MANDATORY: If your module requires a clock or reset, they MUST be named exactly 'clk' and 'rst_n'. "
+    "Include SVA properties inside the module for formal verification. No markdown, no explanations."
 )
 
 REFACTOR_PROMPT_TEMPLATE = (
@@ -133,9 +130,6 @@ def strip_markdown(text: str) -> str:
                 code_lines.append(line)
         if code_lines:
             text = "\n".join(code_lines)
-    idx = text.find("module")
-    if idx > 0:
-        text = text[idx:]
     return text.strip()
 
 
@@ -360,20 +354,16 @@ class LogicFactory:
 
     async def process_spec(self, spec: str) -> ReasoningTriplet:
         t_start = time.time()
-        loop = asyncio.get_event_loop()
 
         # Step 1: Generate initial code
         current_code = await self.generate(spec)
-        incorrect_code = current_code  # will be overwritten only if first attempt fails
+        incorrect_code = current_code
         error_log = ""
         verification_stage = ""
         num_refactors = 0
 
         # Step 2: Verify the initial code
-        results, failure = await loop.run_in_executor(
-            ThreadPoolExecutor(max_workers=1),
-            self._verify_sync, current_code
-        )
+        results, failure = await asyncio.to_thread(self._verify_sync, current_code)
 
         if failure is None:
             # Passed on first attempt
@@ -390,7 +380,7 @@ class LogicFactory:
             )
 
         # Step 3: Refactor loop — prompt Teacher with error, regenerate, retry
-        incorrect_code = current_code  # first failing code is the "incorrect" code
+        incorrect_code = current_code
         error_log = failure.error_log
         verification_stage = failure.stage
 
@@ -402,10 +392,7 @@ class LogicFactory:
             current_code = refactored_code
 
             # Re-verify the refactored code
-            results, failure = await loop.run_in_executor(
-                ThreadPoolExecutor(max_workers=1),
-                self._verify_sync, current_code
-            )
+            results, failure = await asyncio.to_thread(self._verify_sync, current_code)
 
             if failure is None:
                 # Refactored code passed!
@@ -421,8 +408,9 @@ class LogicFactory:
                     verification_stage="all-passed",
                 )
 
-            # Still failing — update error for next refactor attempt
+            # Still failing — update BOTH error and code for next refactor attempt
             error_log = failure.error_log
+            incorrect_code = current_code
             verification_stage = failure.stage
 
         # Step 4: All retries exhausted — save what we have
@@ -438,22 +426,9 @@ class LogicFactory:
         )
 
     def _save_triplet(self, triplet: ReasoningTriplet):
-        table = pa.table({
-            "spec": [triplet.spec],
-            "incorrect_code": [triplet.incorrect_code],
-            "error_log": [triplet.error_log],
-            "corrected_code": [triplet.corrected_code],
-            "num_refactors": [triplet.num_refactors],
-            "total_time_sec": [triplet.total_time_sec],
-            "verification_stage": [triplet.verification_stage],
-            "timestamp": [triplet.timestamp],
-        })
-
         with PARQUET_LOCK:
-            if TRIPLETS_PARQUET.exists():
-                existing = pq.read_table(TRIPLETS_PARQUET)
-                table = pa.concat_tables([existing, table])
-            pq.write_table(table, TRIPLETS_PARQUET)
+            with open(TRIPLETS_JSONL, "a") as f:
+                f.write(json.dumps(triplet.__dict__) + "\n")
 
     async def run(self, prompts: list[str]) -> list[ReasoningTriplet]:
         self.stats["total_prompts"] = len(prompts)
@@ -517,7 +492,7 @@ async def main():
     print(f"  Prompts: {len(prompts)}")
     print(f"  Concurrency: {args.concurrency}")
     print(f"  Teacher: {TEACHER_URL}")
-    print(f"  Output: {TRIPLETS_PARQUET}")
+    print(f"  Output: {TRIPLETS_JSONL}")
     print("=" * 60)
     print()
 
@@ -534,7 +509,7 @@ async def main():
     print(f"  Successful refactors: {factory.stats['successful_refactors']}")
     print(f"  Time elapsed:        {elapsed / 60:.1f} min")
     print(f"  Tokens generated:    {factory.stats['total_tokens']}")
-    print(f"  Triplets saved:      {TRIPLETS_PARQUET}")
+    print(f"  Triplets saved:      {TRIPLETS_JSONL}")
     print(f"{'='*60}")
 
 
