@@ -54,8 +54,6 @@ from config import (
     PACK_MAX_SEQ_LEN, PACK_TARGET_FILL,
 )
 
-import pyarrow.parquet as pq
-
 GALORE_AVAILABLE = False
 try:
     from galore_torch import GaLoreOptimizer
