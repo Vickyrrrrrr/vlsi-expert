@@ -222,6 +222,12 @@ setup_scratch() {
 # ── Step 5: Launch vLLM Servers ────────────────────────────────────
 serve_teacher() {
     source "${VENV_DIR}/bin/activate"
+
+    # ROCm env vars required by vLLM + PyTorch on AMD GPUs
+    export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
+    export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-9.4.2}"
+    export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx942}"
+
     local model_path="${SCRIPT_DIR}/models/$(basename ${TEACHER_MODEL})"
     [ -d "${model_path}" ] || model_path="${TEACHER_MODEL}"
 
@@ -251,6 +257,11 @@ serve_teacher() {
 
 serve_draft() {
     source "${VENV_DIR}/bin/activate"
+
+    export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
+    export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-9.4.2}"
+    export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx942}"
+
     local model_path="${SCRIPT_DIR}/models/$(basename ${DRAFT_MODEL})"
     [ -d "${model_path}" ] || model_path="${DRAFT_MODEL}"
 
