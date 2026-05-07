@@ -4,9 +4,9 @@ VLSI Teacher Server — FastAPI + Transformers (ROCm)
 OpenAI-compatible /v1/chat/completions endpoint.
 
 Usage:
-  python scripts/serve_teacher.py                                    # HF Hub
-  python scripts/serve_teacher.py --local                            # Local model
-  python scripts/serve_teacher.py --model /path/to/model --port 8000
+  python serve_teacher.py                                    # HF Hub
+  python serve_teacher.py --local                            # Local model
+  python serve_teacher.py --model /path/to/model --port 8000
 """
 
 import argparse

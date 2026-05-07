@@ -7,18 +7,18 @@
 #  What this does:
 #    1. Installs OSS CAD Suite (Yosys, Verilator, Icarus Verilog)
 #    2. Sets up Python venv + ROCm-optimized dependencies
-#    3. Installs flash-attn (AMD) + bitsandbytes (ROCm fork)
-#    4. Downloads Teacher (33B) + Draft (1.5B) models
-#    5. Launches dual vLLM instances (Teacher:8000, Draft:8001)
+#    3. Installs vLLM (ROCm wheel) + flash-attn + bitsandbytes
+#    4. Downloads Teacher (33B) + Student (14B) + Draft (1.5B) models
+#    5. Launches vLLM Teacher (port 8000) and Draft (port 8001)
 #
 #  Usage:
 #    chmod +x setup.sh
-#    ./setup.sh                  # Full setup + serve
+#    ./setup.sh                  # Full setup
 #    ./setup.sh --tools-only     # Just OSS CAD Suite
 #    ./setup.sh --venv-only      # Just Python venv + deps
 #    ./setup.sh --download       # Just model downloads
-#    ./setup.sh --serve-teacher  # Launch teacher vLLM (port 8000)
-#    ./setup.sh --serve-draft    # Launch draft vLLM (port 8001)
+#    ./setup.sh --serve-teacher  # Launch Teacher vLLM (port 8000)
+#    ./setup.sh --serve-draft    # Launch Draft vLLM (port 8001)
 #    ./setup.sh --quick          # Skip model downloads
 # ═══════════════════════════════════════════════════════════════════
 
@@ -55,7 +55,7 @@ preflight() {
         exit 1
     fi
     GPU_COUNT=$(rocm-smi --showproductname 2>/dev/null | grep -c "MI300" || echo "0")
-    ok "Detected ${GPU_COUNT}x AMD MI300X GPU(s) with ROCm"
+    ok "Detected ${GPU_COUNT}x AMD MI300X GPU(s)"
     if grep -q "gfx942" /opt/rocm/bin/rocminfo 2>/dev/null; then
         ok "ROCm gfx942 (MI300X) confirmed"
     fi
@@ -77,8 +77,7 @@ install_oss_cad_suite() {
         *) err "Unsupported platform: $(uname -sm)"; exit 1 ;;
     esac
 
-    # Fetch latest nightly release URL
-    log "Fetching latest OSS CAD Suite nightly release..."
+    log "Fetching latest OSS CAD Suite nightly..."
     local release_url
     release_url=$(curl -s "https://api.github.com/repos/YosysHQ/oss-cad-suite-build/releases" \
         | python3 -c "
@@ -87,12 +86,11 @@ for r in json.load(sys.stdin):
     for a in r['assets']:
         if '${os_type}-${arch}' in a['name'] and a['name'].endswith('.tgz'):
             print(a['browser_download_url']); sys.exit(0)
-" 2>/dev/null) || release_url="https://github.com/YosysHQ/oss-cad-suite-build/releases/latest"
+" 2>/dev/null) || true
 
-    if [ -z "$release_url" ] || [ "$release_url" = "https://github.com/YosysHQ/oss-cad-suite-build/releases/latest" ]; then
-        # Fallback: use a known-good nightly
+    if [ -z "$release_url" ]; then
         release_url="https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2025-01-31/oss-cad-suite-linux-x64-20250131.tgz"
-        warn "Could not auto-detect latest nightly; using pinned 2025-01-31 release"
+        warn "Could not auto-detect latest; using pinned 2025-01-31 release"
     fi
 
     local archive="${TOOLS_DIR}/oss-cad-suite.tgz"
@@ -100,7 +98,7 @@ for r in json.load(sys.stdin):
 
     log "Downloading OSS CAD Suite (~600MB)..."
     curl -L --progress-bar -o "${archive}" "${release_url}" || {
-        err "Download failed. Check network or try manually."
+        err "Download failed."
         exit 1
     }
 
@@ -114,7 +112,7 @@ export PATH="${HOME}/oss-cad-suite/bin:${PATH}"
 source "${HOME}/oss-cad-suite/environment" 2>/dev/null || true
 BASHRC_OSS
 
-    ok "OSS CAD Suite installed: $(yosys -V 2>/dev/null || echo "restart shell to use")"
+    ok "OSS CAD Suite installed — restart shell or: source ~/oss-cad-suite/environment"
 }
 
 # ── Step 2: Python Environment ─────────────────────────────────────
@@ -123,7 +121,6 @@ setup_venv() {
     if [ -f "${VENV_DIR}/bin/activate" ]; then
         ok "Venv exists at ${VENV_DIR}"
     else
-        warn "Venv missing or corrupted, recreating..."
         rm -rf "${VENV_DIR}"
         python3 -m venv "${VENV_DIR}"
         ok "Created venv at ${VENV_DIR}"
@@ -134,16 +131,22 @@ setup_venv() {
 
 install_deps() {
     source "${VENV_DIR}/bin/activate"
-    log "Installing ROCm PyTorch + core dependencies..."
 
-    python -c "import torch; assert torch.cuda.is_available(); print(f'PyTorch {torch.__version__} ROCm {torch.version.hip}')" 2>/dev/null && {
-        ok "ROCm PyTorch already installed"
+    # ── ROCm PyTorch ──
+    log "Installing PyTorch for ROCm..."
+    python -c "import torch; assert torch.cuda.is_available(); print(f'PyTorch {torch.__version__}')" 2>/dev/null && {
+        ok "PyTorch ROCm already installed"
     } || {
-        log "Installing ROCm PyTorch..."
         pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm7.0
+        python -c "import torch; assert torch.cuda.is_available(), 'PyTorch not seeing GPU'" || {
+            err "PyTorch ROCm install failed. GPU not detected."
+            exit 1
+        }
+        ok "PyTorch ROCm installed"
     }
 
-    log "Installing ML stack..."
+    # ── Core ML stack ──
+    log "Installing ML dependencies..."
     pip install -q \
         transformers>=4.49.0 \
         accelerate>=0.34.0 \
@@ -154,7 +157,10 @@ install_deps() {
         deepspeed>=0.15.0 \
         sentencepiece \
         pyarrow \
-        tqdm \
+        tqdm
+
+    # ── API stack ──
+    pip install -q \
         fastapi \
         uvicorn[standard] \
         pydantic \
@@ -162,37 +168,66 @@ install_deps() {
         aiohttp \
         orjson
 
-    log "Installing vLLM..."
-    pip install -q vllm 2>/dev/null && ok "vLLM installed" || {
-        warn "vLLM pip install failed — building from source for ROCm..."
-        MAX_JOBS=16 pip install vllm --no-build-isolation 2>/dev/null || {
-            warn "vLLM build failed. Will use FastAPI fallback for serving."
-        }
+    # ── vLLM (ROCm-native wheel) ──
+    log "Installing vLLM (ROCm wheel)..."
+    pip install -q vllm \
+        --index-url https://download.vllm.ai/wheels/rocm \
+        --extra-index-url https://pypi.org/simple 2>/dev/null && {
+        ok "vLLM installed (ROCm wheel)"
+    } || {
+        warn "vLLM ROCm wheel failed. Trying fallback FastAPI mode..."
     }
 
-    log "Installing flash-attn (AMD ROCm)..."
-    FLASH_ATTN_BUILD=1 pip install flash-attn --no-build-isolation 2>/dev/null && {
+    # ── flash-attn (AMD) ──
+    log "Installing flash-attn..."
+    FLASH_ATTN_BUILD=1 pip install flash-attn --no-build-isolation -q 2>/dev/null && {
         ok "flash-attn installed"
     } || {
-        warn "flash-attn build failed. Install manually from https://github.com/ROCm/flash-attention"
+        warn "flash-attn build failed (non-critical). Install from https://github.com/ROCm/flash-attention"
     }
 
-    log "Installing bitsandbytes (ROCm fork)..."
+    # ── bitsandbytes (ROCm) ──
+    log "Installing bitsandbytes..."
     pip install -q bitsandbytes>=0.45.0 2>/dev/null && {
-        ok "bitsandbytes installed (ROCm-compatible)"
+        ok "bitsandbytes installed"
     } || {
-        warn "bitsandbytes ROCm fork not available. Install from https://github.com/ROCm/bitsandbytes"
+        warn "bitsandbytes ROCm fork not available (non-critical)"
     }
 
-    log "Installing GaLore optimizer..."
-    pip install -q galore-torch 2>/dev/null && ok "galore-torch installed" || {
-        warn "galore-torch not available; installing from GitHub..."
+    # ── GaLore optimizer ──
+    log "Installing GaLore..."
+    pip install -q galore-torch 2>/dev/null || {
         pip install -q git+https://github.com/jiaweizzhao/GaLore.git 2>/dev/null || {
-            warn "GaLore install failed. Will fall back to AdamW + LoRA."
+            warn "GaLore not available. distill.py will use AdamW."
         }
     }
 
     ok "All Python dependencies installed"
+}
+
+# ── Step 2.5: CUDA Ghosting Shim ────────────────────────────────
+fix_cuda_ghosting() {
+    log "Creating libcuda.so.1 shim for ROCm compatibility..."
+    source "${VENV_DIR}/bin/activate"
+
+    local hip_lib
+    hip_lib=$(find /opt/rocm/lib -name "libamdhip64.so.6" 2>/dev/null | head -n 1)
+    [ -z "$hip_lib" ] && hip_lib=$(find /opt/rocm/lib -name "libamdhip64.so*" 2>/dev/null | head -n 1)
+
+    if [ -z "$hip_lib" ]; then
+        warn "libamdhip64.so not found — skipping CUDA shim"
+        return 0
+    fi
+
+    mkdir -p "${VENV_DIR}/lib/stubs"
+    ln -sf "$hip_lib" "${VENV_DIR}/lib/stubs/libcuda.so.1"
+    ln -sf "$hip_lib" "${VENV_DIR}/lib/stubs/libcuda.so"
+
+    if ! grep -q "${VENV_DIR}/lib/stubs" "${VENV_DIR}/bin/activate" 2>/dev/null; then
+        echo "export LD_LIBRARY_PATH=\"${VENV_DIR}/lib/stubs:\$LD_LIBRARY_PATH\"" >> "${VENV_DIR}/bin/activate"
+    fi
+
+    ok "CUDA shim ready — libcuda.so.1 → ${hip_lib}"
 }
 
 # ── Step 3: Model Downloads ────────────────────────────────────────
@@ -200,44 +235,56 @@ download_models() {
     source "${VENV_DIR}/bin/activate"
     log "Downloading models from HuggingFace Hub..."
 
-    for model_id in "${TEACHER_MODEL}" "${DRAFT_MODEL}" "${STUDENT_MODEL}"; do
+    for model_id in "${TEACHER_MODEL}" "${DRAFT_MODEL}"; do
         local local_dir="${SCRIPT_DIR}/models/$(basename ${model_id})"
         if [ -d "${local_dir}" ] && [ "$(ls -A ${local_dir} 2>/dev/null)" ]; then
-            ok "Model already cached: ${model_id}"
+            ok "Model cached: ${model_id}"
         else
             log "Downloading ${model_id}..."
-            python scripts/download_model.py --model "${model_id}" --local-dir "${local_dir}"
+            python download_model.py --model "${model_id}" --local-dir "${local_dir}"
         fi
     done
-    ok "All models downloaded"
+
+    # Student model is optional — only needed for distill.py
+    local student_dir="${SCRIPT_DIR}/models/$(basename ${STUDENT_MODEL})"
+    if [ -d "${student_dir}" ] && [ "$(ls -A ${student_dir} 2>/dev/null)" ]; then
+        ok "Student model cached: ${STUDENT_MODEL}"
+    else
+        warn "Student model not downloaded. Run ./setup.sh --download to get it."
+        warn "Or: python download_model.py --model ${STUDENT_MODEL}"
+    fi
+
+    ok "Core models ready"
 }
 
-# ── Step 4: Create Scratch Directories ─────────────────────────────
+# ── Step 4: Scratch Directories ────────────────────────────────────
 setup_scratch() {
     mkdir -p "${SCRATCH_DIR}/datasets" "${SCRATCH_DIR}/checkpoints"
     chmod 755 "${SCRATCH_DIR}"
-    ok "Scratch storage ready at ${SCRATCH_DIR} (datasets + checkpoints)"
+    ok "Scratch storage ready at ${SCRATCH_DIR}"
 }
 
-# ── Step 5: Launch vLLM Servers ────────────────────────────────────
+# ── Step 5: Launch Servers ─────────────────────────────────────────
 serve_teacher() {
     source "${VENV_DIR}/bin/activate"
 
-    # ROCm env vars required by vLLM + PyTorch on AMD GPUs
     export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
     export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-9.4.2}"
     export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx942}"
+    export VLLM_TARGET_DEVICE="${VLLM_TARGET_DEVICE:-rocm}"
+    export VLLM_ROCM_USE_AITER_FP4BMM=0
+    export VLLM_SKIP_P2P_CHECK=1
+    export HSA_ENABLE_SDMA=0
 
     local model_path="${SCRIPT_DIR}/models/$(basename ${TEACHER_MODEL})"
     [ -d "${model_path}" ] || model_path="${TEACHER_MODEL}"
 
-    log "Launching Teacher vLLM instance (33B) on port ${TEACHER_PORT}..."
-    log "Quantization: FP8/INT8 where available to save VRAM"
+    log "Launching Teacher vLLM (33B) on port ${TEACHER_PORT}..."
     echo ""
     echo "═════════════════════════════════════════════════════════════"
     echo "  Teacher: ${TEACHER_MODEL}"
-    echo "  Endpoint: http://0.0.0.0:${TEACHER_PORT}/v1"
-    echo "  Expected VRAM: ~66GB (bf16) or ~33GB (FP8)"
+    echo "  Endpoint: http://0.0.0.0:${TEACHER_PORT}/v1/chat/completions"
+    echo "  VRAM: ~66GB (bf16)"
     echo "═════════════════════════════════════════════════════════════"
     echo ""
 
@@ -245,14 +292,22 @@ serve_teacher() {
         --model "${model_path}" \
         --dtype bfloat16 \
         --max-model-len 8192 \
-        --gpu-memory-utilization 0.85 \
+        --gpu-memory-utilization 0.90 \
         --tensor-parallel-size 1 \
         --port "${TEACHER_PORT}" \
         --host 0.0.0.0 \
         --api-key "${API_KEY}" \
         --served-model-name vlsi-expert-teacher \
         --enforce-eager \
-        --max-num-seqs 4 || echo "Failed to start vLLM. Ensure it is installed and GPU is available."
+        --max-num-seqs 4 || {
+        warn "vLLM failed. Falling back to FastAPI server..."
+        if [ -f "${SCRIPT_DIR}/serve_teacher.py" ]; then
+            python "${SCRIPT_DIR}/serve_teacher.py" --port "${TEACHER_PORT}"
+        else
+            err "No fallback server found."
+            exit 1
+        fi
+    }
 }
 
 serve_draft() {
@@ -261,17 +316,20 @@ serve_draft() {
     export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
     export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-9.4.2}"
     export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx942}"
+    export VLLM_TARGET_DEVICE="${VLLM_TARGET_DEVICE:-rocm}"
+    export VLLM_ROCM_USE_AITER_FP4BMM=0
+    export VLLM_SKIP_P2P_CHECK=1
+    export HSA_ENABLE_SDMA=0
 
     local model_path="${SCRIPT_DIR}/models/$(basename ${DRAFT_MODEL})"
     [ -d "${model_path}" ] || model_path="${DRAFT_MODEL}"
 
-    log "Launching Draft vLLM instance (1.5B) on port ${DRAFT_PORT}..."
-    log "Purpose: Speculative decoding — speeds up generation by ~3x"
+    log "Launching Draft vLLM (1.5B) on port ${DRAFT_PORT}..."
     echo ""
     echo "═════════════════════════════════════════════════════════════"
-    echo "  Draft:  ${DRAFT_MODEL}"
-    echo "  Endpoint: http://0.0.0.0:${DRAFT_PORT}/v1"
-    echo "  Expected VRAM: ~5GB"
+    echo "  Draft: ${DRAFT_MODEL}"
+    echo "  Endpoint: http://0.0.0.0:${DRAFT_PORT}/v1/chat/completions"
+    echo "  VRAM: ~5GB"
     echo "═════════════════════════════════════════════════════════════"
     echo ""
 
@@ -286,8 +344,11 @@ serve_draft() {
         --api-key "${API_KEY}" \
         --served-model-name vlsi-expert-draft \
         --enforce-eager \
-        --max-num-seqs 4
+        --max-num-seqs 4 || {
+        warn "Draft vLLM failed. This is optional — factory.py uses Teacher only."
+    }
 }
+# ═══════════════════════════════════════════════════════════════════
 
 # ── Main ───────────────────────────────────────────────────────────
 MODE="${1:-all}"
@@ -302,6 +363,7 @@ case "$MODE" in
         preflight
         setup_venv
         install_deps
+        fix_cuda_ghosting
         ;;
     --download)
         setup_venv
@@ -318,8 +380,9 @@ case "$MODE" in
         setup_scratch
         setup_venv
         install_deps
+        fix_cuda_ghosting
         echo ""
-        echo "Skipping model downloads. To download:"
+        echo "Model downloads skipped. To download models:"
         echo "  ./setup.sh --download"
         ;;
     all|*)
@@ -334,15 +397,16 @@ case "$MODE" in
         install_oss_cad_suite
         setup_venv
         install_deps
+        fix_cuda_ghosting
         download_models
         echo ""
         echo "═══════════════════════════════════════════════════════════════"
-        echo "  Setup complete! Launch servers in separate terminals:"
+        echo "  Setup complete! Launch services in separate terminals:"
         echo ""
         echo "  Terminal 1 (Teacher 33B):  ./setup.sh --serve-teacher"
         echo "  Terminal 2 (Draft 1.5B):   ./setup.sh --serve-draft"
         echo "  Terminal 3 (Generation):   python factory.py"
-        echo "  Terminal 4 (Dashboard):    python bridge.py"
+        echo "  Terminal 4 (Distillation): python distill.py"
         echo "═══════════════════════════════════════════════════════════════"
         ;;
 esac

@@ -6,26 +6,21 @@ __pycache__/
 dist/
 build/
 .mypy_cache/
-# Models (downloaded base models are huge — don't commit)
+
+# Models (too large to commit)
 models/*/
 models/*.pt
 models/*.bin
 models/*.safetensors
 !models/.gitkeep
-
-# Training data (generated, not committed)
-data/*.jsonl
-data/*.json
-data/*.parquet
-!data/.gitkeep
+!models/README.md
 
 # Training artifacts
 checkpoints/
 runs/
 *.ckpt
 docs
-
-# HuggingFace
+# HuggingFace cache
 .cache/huggingface/
 .hf_cache/
 
@@ -43,5 +38,4 @@ Thumbs.db
 .env
 *.secret
 START.md
-START.md
-START.md
+.env.example
