@@ -326,6 +326,10 @@ class LogicFactory:
             content = response.choices[0].message.content
             if response.usage:
                 self.stats["total_tokens"] += response.usage.total_tokens
+
+            # Patch the hallucination here (OUTSIDE the if block)
+            content = content.replace("assert_property", "assert property")
+
             return strip_markdown(content)
 
     async def refactor(self, spec: str, incorrect_code: str, error_log: str) -> str:
@@ -347,6 +351,10 @@ class LogicFactory:
             content = response.choices[0].message.content
             if response.usage:
                 self.stats["total_tokens"] += response.usage.total_tokens
+
+            # Patch the hallucination here (OUTSIDE the if block)
+            content = content.replace("assert_property", "assert property")
+
             return strip_markdown(content)
 
     def _verify_sync(self, code: str) -> Tuple[List[VerificationResult], Optional[VerificationResult]]:
