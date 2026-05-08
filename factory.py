@@ -51,10 +51,11 @@ TRIPLETS_JSONL = DATASET_DIR / "reasoning_triplets.jsonl"
 PARQUET_LOCK = threading.Lock()
 
 SYSTEM_PROMPT = (
-    "You are a VLSI design compiler. Output ONLY raw synthesizable SystemVerilog RTL code "
-    "and formal SystemVerilog Assertions (SVA). Start with the module definition. "
-    "MANDATORY: If your module requires a clock or reset, they MUST be named exactly 'clk' and 'rst_n'. "
-    "Include SVA properties inside the module for formal verification. No markdown, no explanations."
+    "You are a VLSI design compiler. Output ONLY raw synthesizable SystemVerilog RTL. "
+    "MANDATORY: Use 'clk' and 'rst_n' (active low). "
+    "For assertions, use simple 'assert property (@(posedge clk) disable iff (!rst_n) ...);' "
+    "inline within the module. DO NOT use 'property...endproperty' blocks. "
+    "No markdown, no explanations, no text before or after the code."
 )
 
 REFACTOR_PROMPT_TEMPLATE = (
