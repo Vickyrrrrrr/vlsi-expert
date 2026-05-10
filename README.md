@@ -4,6 +4,7 @@ emoji: 🔬
 colorFrom: indigo
 colorTo: blue
 sdk: static
+app_file: index.html
 pinned: true
 license: mit
 tags:
