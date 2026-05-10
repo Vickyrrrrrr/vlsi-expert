@@ -1,113 +1,157 @@
-# SiliconSmith AI — VLSI Expert Model
+---
+title: vlsi-moe-yarn — SiliconSmith AI
+emoji: 🔬
+colorFrom: gray
+colorTo: slate
+sdk: static
+pinned: true
+license: mit
+---
 
-> A chip-design AI built on a **custom Qwen-based model** with reasoning FFN layers and YaRN long-context extension.  
-> Served via vLLM on AMD Instinct MI300X. Built for the [AMD Developer Hackathon 2026](https://lablab.ai/ai-hackathons/amd-developer).
+# vlsi-moe-yarn · SiliconSmith AI
+
+A domain-specialized language model for **VLSI and chip design reasoning**,
+built on a custom Qwen-based architecture with reasoning-optimized FFN layers
+and YaRN 262K-token context extension. The backbone model powering the
+**AgentIC** chip design agentic pipeline.
 
 ---
 
-## What It Does
+## What This Model Does
 
-SiliconSmith AI is an AI assistant for **VLSI and chip design**. It holds up to **262,144 tokens** of context — enough to load an entire SoC specification or IP datasheet in one conversation.
+This model is not a general assistant. It is purpose-built to reason about:
 
-| Capability | Example |
+| Domain | Examples |
 |---|---|
-| Architecture reasoning | "Compare mesh vs. ring NoC for a 16-core AI accelerator" |
-| RTL review | "Find timing issues in this Verilog FIFO module" |
-| Clock-domain crossing | "How do I safely cross from 200MHz to 400MHz?" |
-| Constraint guidance | "Write SDC constraints for a 500MHz DDR interface" |
-| Design document Q&A | Paste a full datasheet — it reads and answers |
-| Agentic planning | Multi-step reasoning across chip design sub-tasks |
+| RTL Design | Verilog/SystemVerilog review, bug detection, design patterns |
+| Architecture | NoC topology, pipeline microarchitecture, memory hierarchy |
+| Timing & CDC | Clock-domain crossing analysis, synchronizer design, hold/setup violations |
+| Constraints | SDC/UPF generation, floorplan guidance, power intent |
+| Documentation | Q&A over full datasheets and specifications (up to 262K tokens) |
 
 ---
 
-## Model Architecture
+## How This Model Is Used — The AgentIC Pipeline
 
-This is **not a standard MoE**. The architecture is:
+This model serves as the **reasoning engine** inside
+[AgentIC](https://github.com/Vickyrrrrrr/AgentIC), a multi-agent
+orchestration framework for chip design. Each agent in the pipeline calls
+`vlsi-moe-yarn` via an OpenAI-compatible API for its specific sub-task.
 
-- **Base**: Qwen encoder-decoder backbone
-- **Modification**: 10% of FFN layers replaced with **reasoning-optimized feed-forward blocks** for deeper logical inference
-- **Context**: YaRN (Yet another RoPE extensioN) to extend context to 262,144 tokens
-- **Training**: Knowledge distillation from a larger teacher model on a VLSI-domain corpus
+### Pipeline Flow
+
+```
+User Task (e.g. "Design a RISC-V ALU with testbench")
+        │
+        ▼
+┌─────────────────────────────────────────┐
+│           AgentIC Orchestrator          │
+│        (orchestrator.py)                │
+└────────────────┬────────────────────────┘
+                 │ routes to agents
+    ┌────────────┼──────────────────┐
+    ▼            ▼                    ▼
+architect.py  designer.py        sdc_agent.py
+(block-level  (RTL Verilog/      (SDC timing
+ planning)     SV generation)    constraints)
+    │            │                    │
+    └────────────┼──────────────────┘
+                 ▼
+        testbench_designer.py
+        (testbench generation)
+                 │
+                 ▼
+           verifier.py
+        (functional verification)
+                 │
+                 ▼
+           doc_agent.py
+        (design documentation)
+                 │
+                 ▼
+         Final Design Package
+```
+
+Every agent above calls `vlsi-moe-yarn` as its LLM backend.
+
+### Agent Roles
+
+| Agent | File | What it uses this model for |
+|---|---|---|
+| **Architect** | `architect.py` | High-level block decomposition and architecture decisions |
+| **Designer** | `designer.py` | RTL code generation in Verilog/SystemVerilog |
+| **SDC Agent** | `sdc_agent.py` | Timing constraint generation and clock definition |
+| **Testbench Designer** | `testbench_designer.py` | Automated testbench and stimulus generation |
+| **Verifier** | `verifier.py` | Functional verification reasoning and coverage analysis |
+| **Doc Agent** | `doc_agent.py` | Design documentation and specification writing |
+
+The **Orchestrator** (`orchestrator.py`) manages task decomposition,
+agent routing, context passing, and result aggregation. It uses the
+262K-token context window to carry full design state across agents
+without losing earlier decisions.
 
 ---
 
-## Usage
+## Why This Model for AgentIC
+
+Standard general-purpose LLMs fail at chip design tasks because:
+- They lack RTL-specific vocabulary and design rule knowledge
+- They lose coherence on long design specs (most cap at 8K–32K tokens)
+- They hallucinate plausible but incorrect timing numbers and constraints
+
+`vlsi-moe-yarn` addresses all three:
+- **Trained on VLSI domain data** via knowledge distillation
+- **262,144 token context** via YaRN — holds an entire SoC spec in one pass
+- **Reasoning FFN layers** — 10% of FFN blocks replaced with reasoning-optimized variants for deeper logical inference on structured hardware problems
+
+---
+
+## Connect to the Model
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://127.0.0.1:8000/v1",
+    base_url="http://YOUR_SERVER:8000/v1",
     api_key="EMPTY",
 )
 
+# This is how AgentIC agents call it internally
 response = client.chat.completions.create(
     model="vlsi-moe-yarn",
     messages=[
-        {"role": "system", "content": "You are SiliconSmith, an expert VLSI and chip design assistant."},
-        {"role": "user",   "content": "Explain clock-domain crossing risks in a mixed-signal SoC."}
+        {"role": "system", "content": "You are a VLSI design expert specializing in RTL design and chip architecture."},
+        {"role": "user",   "content": "Generate a parameterized synchronous FIFO in SystemVerilog with configurable depth and width."}
     ],
-    max_tokens=512,
+    max_tokens=1024,
 )
 print(response.choices[0].message.content)
 ```
 
-The model exposes an **OpenAI-compatible API** — any tool, script, or agent framework that supports a custom `base_url` works without modification.
-
 ---
 
-## Serve the Model
+## Model Architecture
 
-```bash
-vllm serve /app/vlsi-moe-yarn \
-  --dtype bfloat16 \
-  --kv-cache-dtype fp8 \
-  --max-model-len 262144 \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-See [`serving/launch.sh`](serving/launch.sh) for the full ROCm environment setup.
-
----
-
-## Infrastructure
-
-| Component | Details |
+| Property | Value |
 |---|---|
-| Hardware | AMD Instinct MI300X · 192GB HBM3 |
-| Runtime | ROCm + vLLM v0.17.1 |
-| Model dtype | bfloat16 · fp8 KV cache |
+| Base | Qwen encoder-decoder backbone |
+| Modification | 10% of FFN layers → reasoning-optimized FFN blocks |
+| Context extension | YaRN (Yet another RoPE extensioN) |
 | Max context | 262,144 tokens |
-| API | OpenAI-compatible `/v1/chat/completions` |
+| dtype | bfloat16 · fp8 KV cache |
+| Training | Knowledge distillation on VLSI-domain corpus |
+| Inference engine | vLLM v0.17.1 on AMD Instinct MI300X |
 
 ---
 
-## Repository Structure
+## Links
 
-```
-vlsi-expert/
-├── app.py            # Main agent application
-├── bridge.py         # Model bridge / API routing
-├── chip.py           # Chip design task tools
-├── factory.py        # Agent factory / orchestration
-├── distill.py        # Knowledge distillation pipeline
-├── config.py         # Configuration
-├── requirements.txt  # Python dependencies
-└── serving/
-    ├── launch.sh     # vLLM server launch script
-    └── test_client.py
-```
-
----
-
-## Hackathon
-
-**AMD Developer Hackathon 2026** · [lablab.ai/ai-hackathons/amd-developer](https://lablab.ai/ai-hackathons/amd-developer)  
-Track: **AI Agents & Agentic Workflows** · `#AMDDevHackathon`
+- ⚙️ **AgentIC pipeline:** [github.com/Vickyrrrrrr/AgentIC](https://github.com/Vickyrrrrrr/AgentIC)
+- 🔬 **vlsi-expert repo:** [github.com/Vickyrrrrrr/vlsi-expert](https://github.com/Vickyrrrrrr/vlsi-expert)
+- 🏆 **Hackathon:** [AMD Developer Hackathon 2026](https://lablab.ai/ai-hackathons/amd-developer)
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
