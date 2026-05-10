@@ -1,11 +1,18 @@
 ---
-title: vlsi-moe-yarn — SiliconSmith AI
+title: vlsi-moe-yarn
 emoji: 🔬
-colorFrom: gray
-colorTo: gray
+colorFrom: indigo
+colorTo: blue
 sdk: static
 pinned: true
 license: mit
+tags:
+- vlsi
+- chip-design
+- eda
+- amd
+- rocm
+- agentic
 ---
 
 # vlsi-moe-yarn · SiliconSmith AI
@@ -116,7 +123,6 @@ client = OpenAI(
     api_key="EMPTY",
 )
 
-# This is how AgentIC agents call it internally
 response = client.chat.completions.create(
     model="vlsi-moe-yarn",
     messages=[
