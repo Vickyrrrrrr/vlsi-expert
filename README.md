@@ -1,22 +1,33 @@
-# 🔬 SiliconSmith AI — Agentic VLSI Copilot
+# SiliconSmith AI — VLSI Expert Model
 
-> A chip-design AI agent powered by a custom long-context MoE model running on AMD Instinct MI300X.  
-> Built for the [AMD Developer Hackathon](https://lablab.ai/ai-hackathons/amd-developer) — **AI Agents & Agentic Workflows** track.
+> A chip-design AI built on a **custom Qwen-based model** with reasoning FFN layers and YaRN long-context extension.  
+> Served via vLLM on AMD Instinct MI300X. Built for the [AMD Developer Hackathon 2026](https://lablab.ai/ai-hackathons/amd-developer).
 
 ---
 
 ## What It Does
 
-SiliconSmith AI is an agentic assistant for **VLSI and chip design**. Ask it anything from architecture tradeoffs to RTL review — it holds up to **262,144 tokens** of design context in a single conversation.
+SiliconSmith AI is an AI assistant for **VLSI and chip design**. It holds up to **262,144 tokens** of context — enough to load an entire SoC specification or IP datasheet in one conversation.
 
 | Capability | Example |
 |---|---|
-| Architecture reasoning | "Tradeoffs of mesh vs. ring NoC for a 16-core SoC?" |
-| RTL analysis | "Find timing issues in this Verilog FIFO module." |
-| Clock domain crossing | "How do I safely cross from 200MHz to 400MHz?" |
-| Constraint guidance | "Write SDC constraints for a 500MHz DDR interface." |
-| Design document Q&A | Paste an entire datasheet — it reads and answers. |
-| Agentic planning | Multi-step reasoning across chip design sub-tasks. |
+| Architecture reasoning | "Compare mesh vs. ring NoC for a 16-core AI accelerator" |
+| RTL review | "Find timing issues in this Verilog FIFO module" |
+| Clock-domain crossing | "How do I safely cross from 200MHz to 400MHz?" |
+| Constraint guidance | "Write SDC constraints for a 500MHz DDR interface" |
+| Design document Q&A | Paste a full datasheet — it reads and answers |
+| Agentic planning | Multi-step reasoning across chip design sub-tasks |
+
+---
+
+## Model Architecture
+
+This is **not a standard MoE**. The architecture is:
+
+- **Base**: Qwen encoder-decoder backbone
+- **Modification**: 10% of FFN layers replaced with **reasoning-optimized feed-forward blocks** for deeper logical inference
+- **Context**: YaRN (Yet another RoPE extensioN) to extend context to 262,144 tokens
+- **Training**: Knowledge distillation from a larger teacher model on a VLSI-domain corpus
 
 ---
 
@@ -31,7 +42,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="/app/vlsi-moe-yarn",
+    model="vlsi-moe-yarn",
     messages=[
         {"role": "system", "content": "You are SiliconSmith, an expert VLSI and chip design assistant."},
         {"role": "user",   "content": "Explain clock-domain crossing risks in a mixed-signal SoC."}
@@ -41,20 +52,7 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-The model is served via a **vLLM OpenAI-compatible API** — any tool or script that supports a custom OpenAI `base_url` works out of the box.
-
----
-
-## Infrastructure
-
-| Component | Details |
-|---|---|
-| Hardware | AMD Instinct MI300X · 192GB HBM3 |
-| Software | ROCm · vLLM v0.17.1 |
-| Model | vlsi-moe-yarn (custom long-context MoE) |
-| Max context | 262,144 tokens |
-| dtype | bfloat16 · fp8 KV cache |
-| API | OpenAI-compatible `/v1/chat/completions` |
+The model exposes an **OpenAI-compatible API** — any tool, script, or agent framework that supports a custom `base_url` works without modification.
 
 ---
 
@@ -69,19 +67,36 @@ vllm serve /app/vlsi-moe-yarn \
   --port 8000
 ```
 
-See [`serving/launch.sh`](serving/launch.sh) for the full AMD/ROCm environment setup.
+See [`serving/launch.sh`](serving/launch.sh) for the full ROCm environment setup.
 
 ---
 
-## Architecture
+## Infrastructure
+
+| Component | Details |
+|---|---|
+| Hardware | AMD Instinct MI300X · 192GB HBM3 |
+| Runtime | ROCm + vLLM v0.17.1 |
+| Model dtype | bfloat16 · fp8 KV cache |
+| Max context | 262,144 tokens |
+| API | OpenAI-compatible `/v1/chat/completions` |
+
+---
+
+## Repository Structure
 
 ```
-Your PC  ──── SSH tunnel :8000 ────►  AMD MI300X Droplet
-                                           │
-                                      vLLM Server
-                                           │
-                                    vlsi-moe-yarn model
-                                    (262K token context)
+vlsi-expert/
+├── app.py            # Main agent application
+├── bridge.py         # Model bridge / API routing
+├── chip.py           # Chip design task tools
+├── factory.py        # Agent factory / orchestration
+├── distill.py        # Knowledge distillation pipeline
+├── config.py         # Configuration
+├── requirements.txt  # Python dependencies
+└── serving/
+    ├── launch.sh     # vLLM server launch script
+    └── test_client.py
 ```
 
 ---
@@ -89,7 +104,7 @@ Your PC  ──── SSH tunnel :8000 ────►  AMD MI300X Droplet
 ## Hackathon
 
 **AMD Developer Hackathon 2026** · [lablab.ai/ai-hackathons/amd-developer](https://lablab.ai/ai-hackathons/amd-developer)  
-Track: **AI Agents & Agentic Workflows** · Prize path: Build in Public `#AMDDevHackathon`
+Track: **AI Agents & Agentic Workflows** · `#AMDDevHackathon`
 
 ---
 
