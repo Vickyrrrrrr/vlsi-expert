@@ -2,7 +2,7 @@
 title: vlsi-moe-yarn — SiliconSmith AI
 emoji: 🔬
 colorFrom: gray
-colorTo: slate
+colorTo: gray
 sdk: static
 pinned: true
 license: mit
